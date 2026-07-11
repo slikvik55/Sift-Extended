@@ -139,6 +139,11 @@ html:not(.light) .tbtn-red:hover   { background: rgba(248,113,113,.08); }
   display: block; border-radius: 3px;
 }
 .viewer video, .viewer audio { outline: none; }
+/* When a video is rotated we mirror it through a <canvas>: a rotated <video> can land on a
+   hardware overlay surface that only supports 0/180 turns and renders blank at 90/270. */
+.video-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: none; pointer-events: none; }
+.video-wrap.rot-active > video { opacity: 0; }
+.video-wrap.rot-active > .video-canvas { display: block; }
 
 .nav-btn {
   position: absolute; top: 50%; transform: translateY(-50%);
@@ -568,6 +573,24 @@ html:not(.light) .btn-c4 { background: linear-gradient(110deg,#10081a,#150b22); 
   position: absolute; right: 264px; top: 0; bottom: 0; width: 87px;
   background: var(--bg-panel); z-index: 19; display: none; pointer-events: none;
 }
+
+/* ══ ROTATE BUTTONS (filmstrip bottom-left) ══════════════════════════ */
+#fsRotate {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 92px;
+  background: var(--bg-panel); border-right: 1px solid var(--border);
+  z-index: 21; cursor: default;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+#fsRotate button {
+  width: 34px; height: 34px; border-radius: 6px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--text-dim); font-size: 17px; line-height: 1;
+  font-family: inherit; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: color var(--t), border-color var(--t), background var(--t), transform var(--t);
+}
+#fsRotate button:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+#fsRotate button:active { transform: scale(.92); }
 /* Floating thumbnail preview shown when hovering the Next-page button */
 #fsNextPreview {
   position: fixed; display: none; z-index: 1000; pointer-events: none;
@@ -1023,6 +1046,10 @@ code {
       <div class="fs-track" id="fsTrack"></div>
       <div class="fs-cursor"></div>
       <div id="fsWall"></div>
+      <div id="fsRotate" onmousedown="event.stopPropagation()">
+        <button id="rotateLeftBtn" type="button" title="Rotate left (preview only)" aria-label="Rotate left" onclick="rotatePreview(-90)">⟲</button>
+        <button id="rotateRightBtn" type="button" title="Rotate right (preview only)" aria-label="Rotate right" onclick="rotatePreview(90)">⟳</button>
+      </div>
       <button id="pageNextBtn" style="display:none" onclick="loadNextPage()"></button>
     </div>
 
@@ -2232,24 +2259,96 @@ window.addEventListener('resize', () => { if (files.length) { positionFilmstrip(
 ═══════════════════════════════════════════════════════════════ */
 let zoomLevel = 1;
 let zoomPanX = 0, zoomPanY = 0;
+let rotation = 0;                    // preview-only rotation (deg), reset per file
 let isPanning = false, panStartX = 0, panStartY = 0, panOriginX = 0, panOriginY = 0;
 
 function resetZoom() {
-  zoomLevel = 1; zoomPanX = 0; zoomPanY = 0;
+  zoomLevel = 1; zoomPanX = 0; zoomPanY = 0; rotation = 0;
   applyZoom();
+}
+
+/* Rotate the current preview (image or video) by 90°. Does not touch the file. */
+function rotatePreview(delta) {
+  if (!getZoomTarget()) return;
+  rotation = ((rotation + delta) % 360 + 360) % 360;
+  applyZoom();
+}
+
+/* When rotated 90/270 the bounding box swaps W/H — shrink so it still fits the frame. */
+function _rotationFitScale(el) {
+  if (rotation !== 90 && rotation !== 270) return 1;
+  const w = el.offsetWidth, h = el.offsetHeight;
+  // .video-wrap already fills its media area, so fit within its own footprint; an <img>
+  // is smaller than its frame, so fit within the parent (viewer) instead.
+  const isWrap = el.classList.contains('video-wrap');
+  const availW = isWrap ? w : (el.parentElement ? el.parentElement.clientWidth : 0);
+  const availH = isWrap ? h : (el.parentElement ? el.parentElement.clientHeight : 0);
+  if (!w || !h || !availW || !availH) return 1;
+  return Math.min(availW / h, availH / w, 1);
 }
 
 function getZoomTarget() {
   const viewer = document.getElementById('viewer');
   // Exclude the NC logo inside #emptyState — only target loaded media.
-  return viewer.querySelector('img:not(.state-logo)') || viewer.querySelector('video') || viewer.querySelector('.video-wrap');
+  // For video/audio the wrapping .video-wrap is the zoom/pan target.
+  return viewer.querySelector('img:not(.state-logo)') || viewer.querySelector('.video-wrap');
+}
+
+/* Mirror a rotated video into a <canvas> (canvas can't be a hardware overlay, so it always
+   rotates). Playback/audio/controls stay on the hidden <video>; the canvas tracks it live. */
+let _rotRAF = null;
+function _stopRotRender() { if (_rotRAF) { cancelAnimationFrame(_rotRAF); _rotRAF = null; } }
+
+function _syncVideoRotation() {
+  const viewer = document.getElementById('viewer');
+  const wrap = viewer ? viewer.querySelector('.video-wrap') : null;
+  const video = wrap ? wrap.querySelector('video') : null;
+  const active = !!(wrap && video && rotation !== 0);
+  if (wrap) wrap.classList.toggle('rot-active', active);
+  if (!active) { _stopRotRender(); return; }
+
+  let canvas = wrap.querySelector('canvas.video-canvas');
+  if (!canvas) { canvas = document.createElement('canvas'); canvas.className = 'video-canvas'; wrap.appendChild(canvas); }
+  if (_rotRAF) return; // loop already running for this rotated video
+  const ctx = canvas.getContext('2d');
+  const draw = () => {
+    if (rotation === 0 || !video.isConnected || !wrap.classList.contains('rot-active')) { _stopRotRender(); return; }
+    const dpr = window.devicePixelRatio || 1;
+    const bw = Math.max(1, Math.round(wrap.clientWidth * dpr));
+    const bh = Math.max(1, Math.round(wrap.clientHeight * dpr));
+    if (canvas.width !== bw) canvas.width = bw;
+    if (canvas.height !== bh) canvas.height = bh;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (vw && vh) {
+      const swap = (rotation === 90 || rotation === 270);
+      const boxW = swap ? vh : vw, boxH = swap ? vw : vh;
+      const scale = Math.min(bw / boxW, bh / boxH); // contain, in the rotated orientation
+      ctx.clearRect(0, 0, bw, bh);
+      ctx.save();
+      ctx.translate(bw / 2, bh / 2);
+      ctx.rotate(rotation * Math.PI / 180);
+      ctx.drawImage(video, -vw * scale / 2, -vh * scale / 2, vw * scale, vh * scale);
+      ctx.restore();
+    }
+    _rotRAF = requestAnimationFrame(draw);
+  };
+  _rotRAF = requestAnimationFrame(draw);
 }
 
 function applyZoom() {
   const el = getZoomTarget();
   if (!el) return;
+  _syncVideoRotation();
+  // When the canvas mirror is active it already bakes in the rotation + fit, so the wrapper
+  // transform only handles zoom/pan. Images (and 0deg videos) rotate via CSS as before.
+  const canvasActive = !!(el.classList && el.classList.contains('rot-active'));
+  const effRot = canvasActive ? 0 : rotation;
+  const fit = canvasActive ? 1 : _rotationFitScale(el);
   el.style.transformOrigin = '0 0';
-  el.style.transform = `translate(${zoomPanX}px, ${zoomPanY}px) scale(${zoomLevel})`;
+  const cx = el.offsetWidth / 2, cy = el.offsetHeight / 2;
+  el.style.transform =
+    `translate(${zoomPanX}px, ${zoomPanY}px) scale(${zoomLevel}) ` +
+    `translate(${cx}px, ${cy}px) rotate(${effRot}deg) scale(${fit}) translate(${-cx}px, ${-cy}px)`;
   el.style.cursor = zoomLevel > 1 ? (isPanning ? 'grabbing' : 'grab') : '';
   positionViewerSortBadge();
 }
