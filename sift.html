@@ -1652,26 +1652,8 @@ async function loadFolder(path, offset = 0) {
 
     idx = 0; busy = false;
     updateStats(); renderList(); renderSortButtons(); renderFilmstrip();
-    await showFile(0); loadMediaDurations();
+    await showFile(0);
   } catch(e) { toast('Server error: ' + e.message); busy = false; }
-}
-
-function loadMediaDurations() {
-  const medias = allFiles.filter(f => ((f.type||f.mediaType)==='video'||(f.type||f.mediaType)==='audio') && f.duration==null);
-  let pending = medias.length; if (!pending) return;
-  medias.forEach(f => {
-    const t = (f.type||f.mediaType);
-    const el = document.createElement(t==='audio'?'audio':'video');
-    el.preload = 'metadata'; let done = false;
-    const settle = (dur) => {
-      if (done) return; done = true;
-      if (dur != null) f.duration = dur;
-      if (--pending === 0) renderList();
-    };
-    el.addEventListener('loadedmetadata', () => settle(el.duration));
-    el.addEventListener('error', () => settle(null));
-    el.src = '/media/' + mediaPathOf(f);
-  });
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1932,15 +1914,32 @@ function highlightList(i) {
 ═══════════════════════════════════════════════════════════════ */
 const FS_ITEM_W = 58, FS_GAP = 4, FS_STEP = 58 + 4;
 
+const FS_BUILD_BATCH = 150;
+let _fsRenderToken = 0;
+
 function renderFilmstrip() {
   const strip = document.getElementById('filmstrip');
   const track = document.getElementById('fsTrack');
   if (!strip || !track) return;
-  if (!files.length) { strip.style.display = 'none'; return; }
+  // Cancel any in-flight batched build and reset lazy-thumb work from the last render.
+  const token = ++_fsRenderToken;
+  _resetFsThumbObserver();
+  if (!files.length) { strip.style.display = 'none'; track.innerHTML = ''; return; }
   strip.style.display = '';
   track.innerHTML = '';
-  files.forEach((f, i) => track.appendChild(buildFsItem(f, i)));
-  positionFilmstrip(false);
+
+  const list = files;
+  let i = 0;
+  const buildBatch = () => {
+    if (token !== _fsRenderToken) return; // superseded by a newer render
+    const frag = document.createDocumentFragment();
+    const end = Math.min(i + FS_BUILD_BATCH, list.length);
+    for (; i < end; i++) frag.appendChild(buildFsItem(list[i], i));
+    track.appendChild(frag);
+    positionFilmstrip(false);
+    if (i < list.length) requestAnimationFrame(buildBatch);
+  };
+  buildBatch();
 }
 
 function buildFsItem(f, i) {
@@ -1964,7 +1963,9 @@ function buildFsItem(f, i) {
       const ico = document.createElement('div');
       ico.className = 'fs-ico'; ico.textContent = '🎬';
       item.appendChild(ico);
-      captureVideoThumb(f, img, ico);
+      // Defer thumbnail generation until the item scrolls into view.
+      item._fsFile = f;
+      _getFsThumbObserver().observe(item);
     }
   } else {
     const ico = document.createElement('div');
@@ -2103,26 +2104,113 @@ function highlightFilmstrip(newIdx) {
   });
 })();
 
-function captureVideoThumb(f, imgEl, icoEl) {
+/* ═══════════════════════════════════════════════════════════════
+   Lazy, throttled video thumbnail generation (client-side).
+   Only filmstrip items in / near view generate thumbnails, and no more
+   than MAX_THUMB_CONCURRENT run at once, so large video folders don't
+   freeze the main thread.
+═══════════════════════════════════════════════════════════════ */
+const MAX_THUMB_CONCURRENT = 2;
+const THUMB_TIMEOUT_MS = 6000;
+const THUMB_PX = 116;               // small square thumb (2x the 58px cell) — cheap to encode
+const THUMB_VIS_MARGIN = 300;       // px around the strip that still counts as "worth generating"
+let _thumbQueue = [];
+let _thumbActive = 0;
+
+function _resetThumbWork() {
+  _thumbQueue = [];
+  _thumbActive = 0;
+}
+
+function enqueueVideoThumb(f, imgEl, icoEl) {
+  _thumbQueue.push({ f, imgEl, icoEl });
+  _pumpThumbQueue();
+}
+
+/* Is the filmstrip item currently in / near the visible strip window? */
+function _fsItemNearView(el) {
+  const strip = document.getElementById('filmstrip');
+  if (!strip || !el || !el.isConnected) return false;
+  const sr = strip.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  return r.right >= sr.left - THUMB_VIS_MARGIN && r.left <= sr.right + THUMB_VIS_MARGIN;
+}
+
+function _pumpThumbQueue() {
+  while (_thumbActive < MAX_THUMB_CONCURRENT && _thumbQueue.length) {
+    const job = _thumbQueue.shift();
+    // Skip stale jobs: element gone, already has a thumb, or scrolled out of view
+    // (e.g. after a fast filmstrip throw). Keeps active work bounded to visible items.
+    if (!job.imgEl || !job.imgEl.isConnected || job.f._thumb) continue;
+    if (!_fsItemNearView(job.imgEl)) continue;
+    _thumbActive++;
+    captureVideoThumb(job.f, job.imgEl, job.icoEl, () => {
+      _thumbActive--;
+      _pumpThumbQueue();
+    });
+  }
+}
+
+function captureVideoThumb(f, imgEl, icoEl, onDone) {
   const mediaPath = mediaPathOf(f);
   const vid = document.createElement('video');
   vid.preload = 'metadata'; vid.muted = true; vid.playsInline = true;
   vid.crossOrigin = 'anonymous';
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    vid.removeAttribute('src'); vid.load();
+    if (typeof onDone === 'function') onDone();
+  };
   const done = () => {
     try {
+      // Draw into a small fixed square canvas (cover-crop) so the JPEG encode is cheap
+      // and memory stays tiny — full-res toDataURL was the main-thread bottleneck.
+      const sw = vid.videoWidth || THUMB_PX, sh = vid.videoHeight || THUMB_PX;
+      const side = Math.min(sw, sh);
+      const sx = (sw - side) / 2, sy = (sh - side) / 2;
       const canvas = document.createElement('canvas');
-      canvas.width = vid.videoWidth || 120; canvas.height = vid.videoHeight || 68;
-      canvas.getContext('2d').drawImage(vid, 0, 0, canvas.width, canvas.height);
+      canvas.width = THUMB_PX; canvas.height = THUMB_PX;
+      canvas.getContext('2d').drawImage(vid, sx, sy, side, side, 0, 0, THUMB_PX, THUMB_PX);
       const url = canvas.toDataURL('image/jpeg', 0.7);
-      f._thumb = url; imgEl.src = url;
+      f._thumb = url; if (imgEl && imgEl.isConnected) imgEl.src = url;
       if (icoEl && icoEl.parentNode) icoEl.remove();
     } catch(e) {}
-    vid.src = '';
+    finish();
   };
+  // Guard against videos that never fire seeked/error so the queue keeps draining.
+  const timer = setTimeout(finish, THUMB_TIMEOUT_MS);
   vid.addEventListener('seeked', done, { once: true });
-  vid.addEventListener('error', () => { vid.src = ''; }, { once: true });
+  vid.addEventListener('error', finish, { once: true });
   vid.src = '/media/' + mediaPath;
   vid.addEventListener('loadedmetadata', () => { vid.currentTime = 0.1; }, { once: true });
+}
+
+/* Generate thumbnails only for filmstrip video items that scroll in / near view. */
+let _fsThumbObserver = null;
+function _getFsThumbObserver() {
+  if (_fsThumbObserver) return _fsThumbObserver;
+  const strip = document.getElementById('filmstrip');
+  _fsThumbObserver = new IntersectionObserver((entries, obs) => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const item = entry.target;
+      obs.unobserve(item);
+      const f = item._fsFile;
+      if (!f || f._thumb) return;
+      const imgEl = item.querySelector('img.fs-thumb');
+      const icoEl = item.querySelector('.fs-ico');
+      if (imgEl) enqueueVideoThumb(f, imgEl, icoEl);
+    });
+  }, { root: strip || null, rootMargin: '200px' });
+  return _fsThumbObserver;
+}
+
+function _resetFsThumbObserver() {
+  if (_fsThumbObserver) _fsThumbObserver.disconnect();
+  _resetThumbWork();
 }
 
 function updateFilmstripBadge(i) {
@@ -2508,35 +2596,51 @@ function _initGridScrollSlider() {
   track.addEventListener('pointercancel',() => { dragging = false; });
 }
 
+const GRID_BUILD_BATCH = 150;
+let _gridRenderToken = 0;
+
+function buildGridCell(f, i) {
+  const cell = document.createElement('div');
+  cell.className = 'grid-cell' + (i === idx ? ' grid-active' : '');
+  cell.dataset.idx = i;
+  const t = f.mediaType || f.type;
+  if (t === 'image') {
+    const img = document.createElement('img');
+    img.src = '/media/' + mediaPathOf(f);
+    img.loading = 'lazy'; img.alt = '';
+    cell.appendChild(img);
+  } else {
+    const ico = document.createElement('div');
+    ico.className = 'grid-ico';
+    ico.textContent = t === 'video' ? '🎬' : '🔊';
+    cell.appendChild(ico);
+  }
+  cell.onclick = () => { showFile(i); exitGrid(); };
+  return cell;
+}
+
 function renderGrid() {
   const container = document.getElementById('gridContainer');
   if (!container) return;
   container.style.gridTemplateColumns = `repeat(${gridCols}, 1fr)`;
   container.innerHTML = '';
-  files.forEach((f, i) => {
-    const cell = document.createElement('div');
-    cell.className = 'grid-cell' + (i === idx ? ' grid-active' : '');
-    cell.dataset.idx = i;
-    const t = f.mediaType || f.type;
-    if (t === 'image') {
-      const img = document.createElement('img');
-      img.src = '/media/' + mediaPathOf(f);
-      img.loading = 'lazy'; img.alt = '';
-      cell.appendChild(img);
-    } else {
-      const ico = document.createElement('div');
-      ico.className = 'grid-ico';
-      ico.textContent = t === 'video' ? '🎬' : '🔊';
-      cell.appendChild(ico);
-    }
-    cell.onclick = () => { showFile(i); exitGrid(); };
-    container.appendChild(cell);
-  });
-  // Scroll active cell into view
-  requestAnimationFrame(() => {
+  const token = ++_gridRenderToken;
+  const list = files;
+  let i = 0;
+  const scrollActive = () => {
     const active = container.querySelector('.grid-active');
     if (active) active.scrollIntoView({ block: 'center', behavior: 'instant' });
-  });
+  };
+  const buildBatch = () => {
+    if (token !== _gridRenderToken) return; // superseded by a newer render
+    const frag = document.createDocumentFragment();
+    const end = Math.min(i + GRID_BUILD_BATCH, list.length);
+    for (; i < end; i++) frag.appendChild(buildGridCell(list[i], i));
+    container.appendChild(frag);
+    if (i < list.length) { requestAnimationFrame(buildBatch); }
+    else { requestAnimationFrame(scrollActive); }
+  };
+  buildBatch();
 }
 
 function updateGridActive() {
