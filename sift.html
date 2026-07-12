@@ -1928,6 +1928,16 @@ async function unsortCurrent() {
 /* ═══════════════════════════════════════════════════════════════
    Sort
 ═══════════════════════════════════════════════════════════════ */
+/* Detach the current <video>/<audio> so the browser releases its OS file handle.
+   On Windows an open handle blocks the server from moving the file. */
+function _releaseCurrentMedia() {
+  _stopRotRender();
+  const viewer = document.getElementById('viewer');
+  viewer.querySelectorAll('video, audio').forEach(el => {
+    try { el.pause(); } catch (e) {}
+    try { el.removeAttribute('src'); el.load(); } catch (e) {}
+  });
+}
 async function sortCurrent(folderIdx) {
   if (!files.length || busy) return;
   const folderA = folders.map(f => f.name.trim().toLowerCase());
@@ -1935,6 +1945,9 @@ async function sortCurrent(folderIdx) {
   const folder = folders[folderIdx].name.trim();
   if (!folder) { toast('Folder name is empty'); return; }
   const f = files[idx]; busy = true; setSortButtonsDisabled(true);
+  // Release the browser's file handle on the current media first. A playing/buffering
+  // <video> locks the file on Windows, which would make the server-side move fail.
+  _releaseCurrentMedia();
   try {
     const isResort = !!(f.sorted);
     const payload = { filename: f.sortedAs || f.name, folder };
@@ -1948,7 +1961,7 @@ async function sortCurrent(folderIdx) {
       body: JSON.stringify(payload),
     });
     const data = await resp.json();
-    if (!resp.ok || !data.ok) { toast(data.error || 'Sort failed'); busy = false; setSortButtonsDisabled(false); return; }
+    if (!resp.ok || !data.ok) { toast(data.error || 'Sort failed'); busy = false; setSortButtonsDisabled(false); await showFile(idx); return; }
     // Remove old undo entry for this file if re-sorting
     if (isResort) {
       const old = undoStack.findIndex(u => u.destName === (f.sortedAs || f.name) && u.folderName === f.sorted);

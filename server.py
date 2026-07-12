@@ -4,14 +4,55 @@ Run with:  python server.py
 """
 import os
 import sys
+import time
 import shutil
 import subprocess
 import threading
 import webbrowser
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, send_file
+from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__)
+
+
+def _move_with_retry(src, dst, attempts=12, delay=0.15):
+    """shutil.move that retries on transient Windows file locks.
+
+    A media file that is still open by the browser (e.g. a <video> that is
+    buffering/playing) can't be moved on Windows and raises PermissionError
+    (WinError 32) / OSError. We retry briefly to ride out the lock instead of
+    letting the exception bubble up as an HTML 500 page.
+    """
+    last = None
+    for _ in range(attempts):
+        try:
+            shutil.move(src, dst)
+            return
+        except OSError as e:
+            # 32 = file in use by another process, 5 = access denied (transient)
+            if isinstance(e, PermissionError) or getattr(e, "winerror", None) in (32, 5):
+                last = e
+                time.sleep(delay)
+            else:
+                raise
+    raise last
+
+
+@app.errorhandler(Exception)
+def _json_errors_for_api(e):
+    """Ensure /api/* routes always return JSON, never Flask's HTML error page.
+
+    Without this, an unhandled exception makes the frontend's response.json()
+    fail with "Unexpected token '<'" because it received an HTML error page.
+    """
+    if not request.path.startswith("/api/"):
+        if isinstance(e, HTTPException):
+            return e
+        raise e
+    code = e.code if isinstance(e, HTTPException) else 500
+    msg = (e.description if isinstance(e, HTTPException) else str(e)) or "Server error"
+    return jsonify({"ok": False, "error": msg}), code
 
 src_folder: str = ""          # absolute path selected by user
 
@@ -338,7 +379,10 @@ def api_sort():
             dest_path = os.path.join(dest_dir, f"{base}_{n}{ext}")
             n += 1
 
-    shutil.move(src_path, dest_path)
+    try:
+        _move_with_retry(src_path, dest_path)
+    except OSError as e:
+        return jsonify({"error": f"Couldn't move file (it may still be in use): {e}"}), 409
     return jsonify({"ok": True, "dest_name": os.path.basename(dest_path)})
 
 
@@ -374,7 +418,10 @@ def api_undo():
             restore_path = os.path.join(src_folder, f"{base}_{n}{ext}")
             n += 1
 
-    shutil.move(src_path, restore_path)
+    try:
+        _move_with_retry(src_path, restore_path)
+    except OSError as e:
+        return jsonify({"error": f"Couldn't move file (it may still be in use): {e}"}), 409
     return jsonify({"ok": True, "restored_name": os.path.basename(restore_path)})
 
 
