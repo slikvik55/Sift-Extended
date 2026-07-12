@@ -223,7 +223,9 @@ html:not(.light) .tbtn-red:hover   { background: rgba(248,113,113,.08); }
 .video-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; min-height: 0; position: relative; }
 .vcbar {
   height: 44px; background: var(--bg-panel); border-top: 1px solid var(--border);
-  display: flex; align-items: center; gap: 10px; padding: 0 14px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  /* Right panel is position:fixed (264px), so this bar spans under it. Keep controls clear of it. */
+  padding: 0 14px; padding-right: 278px;
 }
 .vc-btn {
   width: 28px; height: 28px; background: var(--bg-card); border: 1px solid var(--border);
@@ -1311,6 +1313,7 @@ let busy         = false;
 let undoStack    = [];
 let defaultSpeed  = parseFloat(localStorage.getItem('ms_speed') || '1');
 let currentSpeed  = defaultSpeed;
+let muted         = localStorage.getItem('ms_muted') === 'true';
 let startupMode      = localStorage.getItem('ms_startup') || 'blank';
 let defaultSortOrder = localStorage.getItem('ms_sort_order') || 'asc';
 let sortOrder        = defaultSortOrder;
@@ -1850,7 +1853,7 @@ async function showFile(i) {
     viewer.classList.add('video-mode');
     const wrap = document.createElement('div'); wrap.className = 'video-wrap';
     const mediaEl = document.createElement(mtype==='audio'?'audio':'video');
-    mediaEl.src = url; mediaEl.autoplay = true; mediaEl.loop = true;
+    mediaEl.src = url; mediaEl.autoplay = true; mediaEl.loop = true; mediaEl.muted = muted;
     mediaEl.addEventListener('loadedmetadata', () => { mediaEl.playbackRate = currentSpeed; updateVcDur(mediaEl); });
     mediaEl.addEventListener('timeupdate', () => updateVcProgress(mediaEl));
     mediaEl.addEventListener('play',  () => { const b = document.getElementById('vcPlay'); if (b) b.textContent = '⏸'; });
@@ -2585,6 +2588,7 @@ document.addEventListener('keydown', e => {
       break;
     case 'z': case 'Z': if (!e.ctrlKey) { e.preventDefault(); undoSort(); } break;
     case ' ': if (document.querySelector('#viewer video, #viewer audio')) { e.preventDefault(); vcTogglePlay(); } break;
+    case 'm': case 'M': if (document.querySelector('#viewer video, #viewer audio')) { e.preventDefault(); vcToggleMute(); } break;
     case 'b': case 'B': e.preventDefault(); browseFolder(); break;
     case 'f': case 'F': e.preventDefault(); toggleFullscreen(); break;
   }
@@ -2603,7 +2607,8 @@ function buildVcBar(viewer) {
     `<button class="vc-btn" id="vcPlay" onclick="vcTogglePlay()">⏸</button>` +
     `<span class="vc-time" id="vcTime">0:00</span>` +
     `<input type="range" class="vc-seek" id="vcSeek" min="0" max="100" step="0.1" value="0">` +
-    `<span class="vc-time" id="vcDur">0:00</span>`;
+    `<span class="vc-time" id="vcDur">0:00</span>` +
+    `<button class="vc-btn" id="vcMute" onclick="vcToggleMute()" title="Mute (M)">${muted ? '🔇' : '🔊'}</button>`;
   bar.querySelector('#vcSeek').addEventListener('input', function() {
     const v = document.querySelector('#viewer video, #viewer audio');
     if (v && v.duration) v.currentTime = (this.value / 100) * v.duration;
@@ -2611,6 +2616,13 @@ function buildVcBar(viewer) {
   viewer.appendChild(bar);
 }
 function vcTogglePlay() { const v = document.querySelector('#viewer video, #viewer audio'); if (!v) return; v.paused ? v.play() : v.pause(); }
+function vcToggleMute() {
+  muted = !muted;
+  localStorage.setItem('ms_muted', muted);
+  document.querySelectorAll('#viewer video, #viewer audio').forEach(v => { v.muted = muted; });
+  const b = document.getElementById('vcMute');
+  if (b) b.textContent = muted ? '🔇' : '🔊';
+}
 function updateVcDur(v)      { const el = document.getElementById('vcDur'); if (el) el.textContent = fmtDuration(v.duration || 0); }
 function updateVcProgress(v) {
   const t = document.getElementById('vcTime'); const s = document.getElementById('vcSeek');
