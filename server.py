@@ -93,25 +93,111 @@ def serve_nimblecloud():
 
 @app.route("/api/browse", methods=["POST"])
 def browse():
+    # Use a real (but fully transparent) top-most window as the dialog's parent instead of a
+    # withdrawn one. A withdrawn parent means the native folder dialog often opens *behind* the
+    # browser on Windows; a visible top-most parent makes the dialog inherit top-most too.
     script = (
         "import tkinter as tk\n"
         "from tkinter import filedialog\n"
         "root = tk.Tk()\n"
-        "root.withdraw()\n"
+        "root.attributes('-alpha', 0.0)\n"
         "root.attributes('-topmost', True)\n"
-        "path = filedialog.askdirectory(title='Select media folder')\n"
+        "root.geometry('1x1+10+10')\n"
+        "root.deiconify()\n"
+        "root.update()\n"
+        "try:\n"
+        "    root.lift()\n"
+        "    root.focus_force()\n"
+        "except Exception:\n"
+        "    pass\n"
+        "try:\n"
+        "    import ctypes\n"
+        "    hwnd = ctypes.windll.user32.GetParent(root.winfo_id())\n"
+        "    ctypes.windll.user32.SetForegroundWindow(hwnd)\n"
+        "except Exception:\n"
+        "    pass\n"
+        "path = filedialog.askdirectory(title='Select media folder', parent=root)\n"
         "root.destroy()\n"
         "print(path or '', end='')\n"
     )
     try:
         result = subprocess.run(
             [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=180,
         )
-        path = result.stdout.strip()
-        return jsonify({"path": path})
+    except subprocess.TimeoutExpired:
+        return jsonify({"path": "", "error": "The folder picker timed out."})
     except Exception as e:
         return jsonify({"path": "", "error": str(e)})
+
+    # A non-zero exit means the picker couldn't even open (e.g. tkinter missing).
+    if result.returncode != 0:
+        stderr_lines = (result.stderr or "").strip().splitlines()
+        detail = stderr_lines[-1] if stderr_lines else "the folder picker failed to open"
+        return jsonify({"path": "", "error": detail})
+    return jsonify({"path": result.stdout.strip()})
+
+
+# ─── In-page folder browser (no native dialog / tkinter needed) ──────────────
+
+def _windows_drives() -> "list[str]":
+    """Return available drive roots like ['C:\\\\', 'D:\\\\'] on Windows."""
+    import string
+    import ctypes
+    drives = []
+    try:
+        bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+    except Exception:
+        return ["C:\\"]
+    for i, letter in enumerate(string.ascii_uppercase):
+        if bitmask & (1 << i):
+            drives.append(f"{letter}:\\")
+    return drives
+
+
+@app.route("/api/list_dir")
+def list_dir():
+    """List the sub-folders of a directory so the UI can browse the filesystem.
+    An empty path returns the drive list (Windows) or filesystem root (POSIX)."""
+    raw = (request.args.get("path", "") or "").strip()
+
+    # No path → top level: Windows drive list, or "/" on POSIX.
+    if not raw:
+        if sys.platform == "win32":
+            drives = _windows_drives()
+            return jsonify({
+                "path": "", "parent": None, "isRoot": True,
+                "dirs": [{"name": d, "path": d} for d in drives],
+            })
+        raw = "/"
+
+    path = os.path.abspath(raw)
+    if not os.path.isdir(path):
+        return jsonify({"error": f"Not a folder: {path}"}), 400
+
+    entries = []
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                if e.name.startswith('.'):
+                    continue
+                try:
+                    if e.is_dir():
+                        entries.append({"name": e.name, "path": os.path.join(path, e.name)})
+                except OSError:
+                    continue
+    except PermissionError as ex:
+        return jsonify({"error": f"Permission denied: {ex}"}), 403
+    entries.sort(key=lambda d: d["name"].lower())
+
+    # Determine the parent. At a drive root on Windows, go back to the drive list ("").
+    parent = os.path.dirname(path)
+    if sys.platform == "win32" and os.path.splitdrive(path)[1] in ("\\", "/", ""):
+        parent = ""
+    elif parent == path:
+        parent = "" if sys.platform == "win32" else None
+
+    return jsonify({"path": path, "parent": parent, "isRoot": False, "dirs": entries})
 
 
 # ─── Open / scan folder ───────────────────────────────────────────────────────

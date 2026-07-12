@@ -600,6 +600,46 @@ html:not(.light) .btn-c4 { background: linear-gradient(110deg,#10081a,#150b22); 
 }
 #fsNextPreview img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
+/* ══ IN-PAGE FOLDER PICKER ══════════════════════════════════════════ */
+#folderPicker {
+  display: none; position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,.78);
+  align-items: center; justify-content: center;
+}
+.fp-card {
+  width: min(680px, 92vw); height: min(560px, 88vh);
+  display: flex; flex-direction: column;
+  background: var(--bg-panel); border: 1px solid var(--border-hi);
+  border-radius: 12px; box-shadow: 0 12px 48px rgba(0,0,0,.6); overflow: hidden;
+}
+.fp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+}
+.fp-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.fp-bar { display: flex; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.fp-bar .path-input { flex: 1; }
+.fp-list { flex: 1; overflow-y: auto; padding: 6px 8px; }
+.fp-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: 6px; cursor: pointer;
+  font-size: 13px; color: var(--text-dim); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.fp-item:hover { background: var(--accent-dim); color: var(--accent); }
+.fp-item.fp-up { color: var(--text-muted); font-weight: 600; }
+.fp-empty { padding: 16px; color: var(--text-muted); font-size: 12px; text-align: center; }
+.fp-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 16px; border-top: 1px solid var(--border);
+}
+.fp-current {
+  flex: 1; min-width: 0; font-size: 11px; color: var(--text-muted);
+  font-family: 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fp-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.fp-actions .tbtn:disabled { opacity: .45; cursor: default; }
+
 /* ══ GRID OVERLAY ════════════════════════════════════════════════════ */
 #gridOverlay {
   position: fixed; inset: 0; z-index: 9999; overflow-y: auto;
@@ -1218,6 +1258,29 @@ code {
 <!-- Floating preview shown when hovering the Next-page button -->
 <div id="fsNextPreview"><img id="fsNextPreviewImg" alt=""></div>
 
+<!-- In-page folder picker (used when the native OS dialog is unavailable) -->
+<div id="folderPicker" onclick="if(event.target===this)fpCancel()">
+  <div class="fp-card">
+    <div class="fp-head">
+      <div class="fp-title">Select a folder</div>
+      <button class="about-close" onclick="fpCancel()">✕</button>
+    </div>
+    <div class="fp-bar">
+      <button class="tbtn" id="fpUpBtn" onclick="fpUp()" title="Up one level">⬆ Up</button>
+      <input class="path-input" id="fpPathInput" placeholder="Type or paste a path, then Enter…"
+             onkeydown="if(event.key==='Enter') fpNavigate(this.value.trim())">
+    </div>
+    <div class="fp-list" id="fpList"></div>
+    <div class="fp-foot">
+      <div class="fp-current" id="fpCurrent"></div>
+      <div class="fp-actions">
+        <button class="tbtn" onclick="fpCancel()">Cancel</button>
+        <button class="tbtn tbtn-green" id="fpSelectBtn" onclick="fpSelect()">Select this folder</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- hidden file list (JS compatibility) -->
 <div id="fileList" style="display:none"></div>
 
@@ -1458,15 +1521,90 @@ function setTheme(mode) {
 /* ═══════════════════════════════════════════════════════════════
    Browse with subfolders
 ═══════════════════════════════════════════════════════════════ */
+/* Opens the native folder picker (server-side). Returns the chosen path, or null if the
+   user cancelled / the picker failed (in which case an explanatory toast is shown). */
+/* In-page folder picker: navigate the filesystem inside the window (works without a native
+   OS dialog / tkinter). Returns a Promise resolving to the chosen path, or null if cancelled. */
+let _fpResolve = null;
+let _fpCurrentPath = '';
+let _fpParent = null;
+let _fpIsRoot = false;
+
+function pickFolder() {
+  return new Promise((resolve) => {
+    _fpResolve = resolve;
+    const overlay = document.getElementById('folderPicker');
+    overlay.style.display = 'flex';
+    const start = document.getElementById('pathInput').value.trim()
+               || localStorage.getItem('ms_last_folder') || '';
+    fpNavigate(start);
+  });
+}
+
+async function fpNavigate(path) {
+  try {
+    const resp = await fetch('/api/list_dir?path=' + encodeURIComponent(path || ''));
+    const data = await resp.json();
+    if (data.error) { toast(data.error); return; }
+    _fpCurrentPath = data.path || '';
+    _fpParent = data.parent;
+    _fpIsRoot = !!data.isRoot;
+    _renderFolderPicker(data);
+  } catch { toast('Cannot reach server'); }
+}
+
+function _renderFolderPicker(data) {
+  document.getElementById('fpPathInput').value = data.path || '';
+  document.getElementById('fpCurrent').textContent =
+    data.isRoot ? 'Choose a drive to browse into' : ('Selected: ' + data.path);
+  document.getElementById('fpUpBtn').disabled = data.isRoot;
+  document.getElementById('fpSelectBtn').disabled = data.isRoot || !data.path;
+
+  const list = document.getElementById('fpList');
+  list.innerHTML = '';
+  if (!data.dirs || !data.dirs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'fp-empty';
+    empty.textContent = data.isRoot ? 'No drives found.' : 'No sub-folders here. Use “Select this folder”.';
+    list.appendChild(empty);
+    return;
+  }
+  data.dirs.forEach(d => {
+    const item = document.createElement('div');
+    item.className = 'fp-item';
+    item.textContent = (data.isRoot ? '💾 ' : '📁 ') + d.name;
+    item.title = d.path;
+    item.onclick = () => fpNavigate(d.path);
+    list.appendChild(item);
+  });
+}
+
+function fpUp() {
+  if (_fpIsRoot) return;
+  fpNavigate(_fpParent != null ? _fpParent : '');
+}
+
+function fpSelect() {
+  if (_fpIsRoot || !_fpCurrentPath) return;
+  _fpClose(_fpCurrentPath);
+}
+
+function fpCancel() { _fpClose(null); }
+
+function _fpClose(result) {
+  document.getElementById('folderPicker').style.display = 'none';
+  const resolve = _fpResolve; _fpResolve = null;
+  if (resolve) resolve(result || null);
+}
+
 async function browseWithSubfolders() {
   try {
-    const resp = await fetch('/api/browse', { method: 'POST' });
-    const data = await resp.json();
-    if (data.path) {
+    const path = await pickFolder();
+    if (path) {
       includeSubfolders = true;
       localStorage.setItem('ms_subfolders', 'true');
-      document.getElementById('pathInput').value = data.path;
-      await loadFolder(data.path);
+      document.getElementById('pathInput').value = path;
+      await loadFolder(path);
     }
   } catch { toast('Cannot reach server'); }
 }
@@ -1503,13 +1641,12 @@ function mediaPathOf(f) {
 ═══════════════════════════════════════════════════════════════ */
 async function browseFolder() {
   try {
-    const resp = await fetch('/api/browse', { method: 'POST' });
-    const data = await resp.json();
-    if (data.path) {
+    const path = await pickFolder();
+    if (path) {
       includeSubfolders = false;
       localStorage.setItem('ms_subfolders', 'false');
-      document.getElementById('pathInput').value = data.path;
-      await loadFolder(data.path);
+      document.getElementById('pathInput').value = path;
+      await loadFolder(path);
     }
   } catch { toast('Cannot reach server'); }
 }
@@ -1520,8 +1657,7 @@ let _pendingStripResult = null;
 async function stripMetadata() {
   try {
     toast('Select a folder…');
-    const br = await fetch('/api/browse', { method: 'POST' });
-    const { path } = await br.json();
+    const path = await pickFolder();
     if (!path) return;
     await _doStrip(path);
   } catch { toast('Cannot reach server'); }
@@ -2801,7 +2937,12 @@ function closeAbout() {
   o.classList.remove('open'); o.style.display = 'none';
   localStorage.setItem('sift_about_seen', '1');
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeAbout(); closeGuide(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (document.getElementById('folderPicker').style.display === 'flex') { fpCancel(); return; }
+    closeAbout(); closeGuide();
+  }
+});
 if (!localStorage.getItem('sift_guide_seen')) openGuide();
 function closeGuide() {
   const o = document.getElementById('guideOverlay');
