@@ -89,56 +89,7 @@ def serve_nimblecloud():
     return send_file(p)
 
 
-# ─── Native folder picker (spawns subprocess so tkinter runs in main thread) ─
-
-@app.route("/api/browse", methods=["POST"])
-def browse():
-    # Use a real (but fully transparent) top-most window as the dialog's parent instead of a
-    # withdrawn one. A withdrawn parent means the native folder dialog often opens *behind* the
-    # browser on Windows; a visible top-most parent makes the dialog inherit top-most too.
-    script = (
-        "import tkinter as tk\n"
-        "from tkinter import filedialog\n"
-        "root = tk.Tk()\n"
-        "root.attributes('-alpha', 0.0)\n"
-        "root.attributes('-topmost', True)\n"
-        "root.geometry('1x1+10+10')\n"
-        "root.deiconify()\n"
-        "root.update()\n"
-        "try:\n"
-        "    root.lift()\n"
-        "    root.focus_force()\n"
-        "except Exception:\n"
-        "    pass\n"
-        "try:\n"
-        "    import ctypes\n"
-        "    hwnd = ctypes.windll.user32.GetParent(root.winfo_id())\n"
-        "    ctypes.windll.user32.SetForegroundWindow(hwnd)\n"
-        "except Exception:\n"
-        "    pass\n"
-        "path = filedialog.askdirectory(title='Select media folder', parent=root)\n"
-        "root.destroy()\n"
-        "print(path or '', end='')\n"
-    )
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=180,
-        )
-    except subprocess.TimeoutExpired:
-        return jsonify({"path": "", "error": "The folder picker timed out."})
-    except Exception as e:
-        return jsonify({"path": "", "error": str(e)})
-
-    # A non-zero exit means the picker couldn't even open (e.g. tkinter missing).
-    if result.returncode != 0:
-        stderr_lines = (result.stderr or "").strip().splitlines()
-        detail = stderr_lines[-1] if stderr_lines else "the folder picker failed to open"
-        return jsonify({"path": "", "error": detail})
-    return jsonify({"path": result.stdout.strip()})
-
-
-# ─── In-page folder browser (no native dialog / tkinter needed) ──────────────
+# ─── In-page folder browser ──────────────────────────────────────────────────
 
 def _windows_drives() -> "list[str]":
     """Return available drive roots like ['C:\\\\', 'D:\\\\'] on Windows."""

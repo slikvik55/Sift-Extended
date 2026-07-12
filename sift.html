@@ -1258,7 +1258,7 @@ code {
 <!-- Floating preview shown when hovering the Next-page button -->
 <div id="fsNextPreview"><img id="fsNextPreviewImg" alt=""></div>
 
-<!-- In-page folder picker (used when the native OS dialog is unavailable) -->
+<!-- In-page folder picker -->
 <div id="folderPicker" onclick="if(event.target===this)fpCancel()">
   <div class="fp-card">
     <div class="fp-head">
@@ -1521,10 +1521,8 @@ function setTheme(mode) {
 /* ═══════════════════════════════════════════════════════════════
    Browse with subfolders
 ═══════════════════════════════════════════════════════════════ */
-/* Opens the native folder picker (server-side). Returns the chosen path, or null if the
-   user cancelled / the picker failed (in which case an explanatory toast is shown). */
-/* In-page folder picker: navigate the filesystem inside the window (works without a native
-   OS dialog / tkinter). Returns a Promise resolving to the chosen path, or null if cancelled. */
+/* In-page folder picker: navigate the filesystem inside the window. Returns a Promise
+   resolving to the chosen path, or null if the user cancelled. */
 let _fpResolve = null;
 let _fpCurrentPath = '';
 let _fpParent = null;
