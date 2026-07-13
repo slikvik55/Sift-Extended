@@ -384,8 +384,8 @@ html:not(.light) .tbtn-red:hover   { background: rgba(248,113,113,.08); }
 }
 .sort-btn span:last-child { flex: 1; }
 /* Compact variant used in a folder-row: short width, full height, centered number */
-.sort-btn.compact { width: 46px; padding: 0; gap: 0; justify-content: center; }
-.sort-btn.compact .btn-key { flex: 0 0 auto; }
+.sort-btn.compact { min-width: 46px; width: auto; padding: 0 4px; gap: 0; justify-content: center; }
+.sort-btn.compact .btn-key { flex: 0 0 auto; min-width: 22px; font-size: 10px; }
 .btn-c0 { background: linear-gradient(110deg,rgba(74,222,128,.10),rgba(74,222,128,.16)); border-color: rgba(74,222,128,.3); border-left-color: #4ade80; color: #16a34a; }
 .btn-c0:not(:disabled):hover { background: linear-gradient(110deg,rgba(74,222,128,.22),rgba(74,222,128,.30)); box-shadow: 0 4px 18px rgba(74,222,128,.22); transform: translateX(2px); }
 .btn-c1 { background: linear-gradient(110deg,rgba(248,113,113,.10),rgba(248,113,113,.16)); border-color: rgba(248,113,113,.3); border-left-color: #f87171; color: #dc2626; }
@@ -396,6 +396,16 @@ html:not(.light) .tbtn-red:hover   { background: rgba(248,113,113,.08); }
 .btn-c3:not(:disabled):hover { background: linear-gradient(110deg,rgba(251,191,36,.22),rgba(251,191,36,.30)); box-shadow: 0 4px 18px rgba(251,191,36,.22); transform: translateX(2px); }
 .btn-c4 { background: linear-gradient(110deg,rgba(192,132,252,.10),rgba(192,132,252,.16)); border-color: rgba(192,132,252,.3); border-left-color: #c084fc; color: #7c3aed; }
 .btn-c4:not(:disabled):hover { background: linear-gradient(110deg,rgba(192,132,252,.22),rgba(192,132,252,.30)); box-shadow: 0 4px 18px rgba(192,132,252,.22); transform: translateX(2px); }
+.btn-c5 { background: linear-gradient(110deg,rgba(45,212,191,.10),rgba(45,212,191,.16)); border-color: rgba(45,212,191,.3); border-left-color: #2dd4bf; color: #0d9488; }
+.btn-c5:not(:disabled):hover { background: linear-gradient(110deg,rgba(45,212,191,.22),rgba(45,212,191,.30)); box-shadow: 0 4px 18px rgba(45,212,191,.22); transform: translateX(2px); }
+.btn-c6 { background: linear-gradient(110deg,rgba(251,146,60,.10),rgba(251,146,60,.16)); border-color: rgba(251,146,60,.3); border-left-color: #fb923c; color: #c2410c; }
+.btn-c6:not(:disabled):hover { background: linear-gradient(110deg,rgba(251,146,60,.22),rgba(251,146,60,.30)); box-shadow: 0 4px 18px rgba(251,146,60,.22); transform: translateX(2px); }
+.btn-c7 { background: linear-gradient(110deg,rgba(244,114,182,.10),rgba(244,114,182,.16)); border-color: rgba(244,114,182,.3); border-left-color: #f472b6; color: #be185d; }
+.btn-c7:not(:disabled):hover { background: linear-gradient(110deg,rgba(244,114,182,.22),rgba(244,114,182,.30)); box-shadow: 0 4px 18px rgba(244,114,182,.22); transform: translateX(2px); }
+.btn-c8 { background: linear-gradient(110deg,rgba(163,230,53,.10),rgba(163,230,53,.16)); border-color: rgba(163,230,53,.3); border-left-color: #a3e635; color: #4d7c0f; }
+.btn-c8:not(:disabled):hover { background: linear-gradient(110deg,rgba(163,230,53,.22),rgba(163,230,53,.30)); box-shadow: 0 4px 18px rgba(163,230,53,.22); transform: translateX(2px); }
+.btn-c9 { background: linear-gradient(110deg,rgba(56,189,248,.10),rgba(56,189,248,.16)); border-color: rgba(56,189,248,.3); border-left-color: #38bdf8; color: #0369a1; }
+.btn-c9:not(:disabled):hover { background: linear-gradient(110deg,rgba(56,189,248,.22),rgba(56,189,248,.30)); box-shadow: 0 4px 18px rgba(56,189,248,.22); transform: translateX(2px); }
 
 /* Dark mode: restore deep dark fills */
 html:not(.light) .btn-c0 { background: linear-gradient(110deg,#081a0e,#0b2015); border-color: #0f2a18; color: #4ade80; }
@@ -403,6 +413,11 @@ html:not(.light) .btn-c1 { background: linear-gradient(110deg,#1a0808,#200b0b); 
 html:not(.light) .btn-c2 { background: linear-gradient(110deg,#08101a,#0b1420); border-color: #101e38; color: #60a5fa; }
 html:not(.light) .btn-c3 { background: linear-gradient(110deg,#1a1008,#201408); border-color: #3a200e; color: #fbbf24; }
 html:not(.light) .btn-c4 { background: linear-gradient(110deg,#10081a,#150b22); border-color: #22103c; color: #c084fc; }
+html:not(.light) .btn-c5 { background: linear-gradient(110deg,#081a18,#0b201c); border-color: #0f2a28; color: #2dd4bf; }
+html:not(.light) .btn-c6 { background: linear-gradient(110deg,#1a1008,#201408); border-color: #3a2010; color: #fb923c; }
+html:not(.light) .btn-c7 { background: linear-gradient(110deg,#1a0814,#200b18); border-color: #3a1030; color: #f472b6; }
+html:not(.light) .btn-c8 { background: linear-gradient(110deg,#141a08,#18200b); border-color: #283a10; color: #a3e635; }
+html:not(.light) .btn-c9 { background: linear-gradient(110deg,#08141a,#0b1820); border-color: #102838; color: #38bdf8; }
 .browse-btn {
   background: var(--accent); border-color: var(--accent-hi); border-left-color: var(--accent-hi);
   color: #000; font-weight: 700; height: 48px;
@@ -920,7 +935,7 @@ code {
         <div class="guide-step-num">2</div>
         <div class="guide-step-body">
           <div class="guide-step-title">Set up your sift destinations</div>
-          <div class="guide-step-desc">In the <strong>Sift Destinations</strong> panel on the right, you'll see two default folders. <em>Save</em> and <em>Delete</em>. Rename them or add up to 5 destinations using <strong>+ Add</strong>. Each destination gets a number key (1–5).</div>
+          <div class="guide-step-desc">In the <strong>Sift Destinations</strong> panel on the right, you'll see two default folders. <em>Save</em> and <em>Delete</em>. Rename them or add up to 10 destinations using <strong>+ Add</strong>. Each destination gets a number key (<kbd>1</kbd>–<kbd>9</kbd>, <kbd>0</kbd> for the 10th).</div>
         </div>
       </div>
 
@@ -960,7 +975,7 @@ code {
         <div class="guide-step-num">7</div>
         <div class="guide-step-body">
           <div class="guide-step-title">Keyboard shortcuts</div>
-          <div class="guide-step-desc"><kbd>1</kbd>–<kbd>5</kbd> sift to destination &nbsp;·&nbsp; <kbd>←</kbd><kbd>→</kbd> navigate &nbsp;·&nbsp; <kbd>Z</kbd> undo &nbsp;·&nbsp; <kbd>B</kbd> browse &nbsp;·&nbsp; <kbd>Space</kbd> play/pause &nbsp;·&nbsp; <kbd>F</kbd> fullscreen</div>
+          <div class="guide-step-desc"><kbd>1</kbd>–<kbd>9</kbd> sift to destination &nbsp;·&nbsp; <kbd>0</kbd> sift to 10th &nbsp;·&nbsp; <kbd>←</kbd><kbd>→</kbd> navigate &nbsp;·&nbsp; <kbd>Z</kbd> undo &nbsp;·&nbsp; <kbd>B</kbd> browse &nbsp;·&nbsp; <kbd>Space</kbd> play/pause &nbsp;·&nbsp; <kbd>M</kbd> mute &nbsp;·&nbsp; <kbd>F</kbd> fullscreen</div>
         </div>
       </div>
 
@@ -1217,7 +1232,7 @@ code {
     <div class="shortcut-box" id="shortcutBox">
       <div class="sc-head">Keyboard Shortcuts</div>
       <div id="scText">
-        <div class="sc-row"><span class="sc-key">1 – 5</span> Sift into folder</div>
+        <div class="sc-row"><span class="sc-key">1 – 9, 0</span> Sift into folder</div>
         <div class="sc-row"><span class="sc-key">←</span><span class="sc-key">→</span> Navigate files</div>
         <div class="sc-row"><span class="sc-key">Z</span> Undo &nbsp; <span class="sc-key">B</span> Browse</div>
 
@@ -1286,14 +1301,19 @@ code {
 /* ═══════════════════════════════════════════════════════════════
    Config
 ═══════════════════════════════════════════════════════════════ */
-const MAX_FOLDERS  = 5;
-const DOT_COLORS   = ['#4ade80','#f87171','#60a5fa','#fbbf24','#c084fc'];
+const MAX_FOLDERS  = 10;
+const DOT_COLORS   = ['#4ade80','#f87171','#60a5fa','#fbbf24','#c084fc','#2dd4bf','#fb923c','#f472b6','#a3e635','#38bdf8'];
 const BADGE_STYLES = [
   'background:rgba(74,222,128,.1);color:#4ade80',
   'background:rgba(248,113,113,.1);color:#f87171',
   'background:rgba(96,165,250,.1);color:#60a5fa',
   'background:rgba(251,191,36,.1);color:#fbbf24',
   'background:rgba(192,132,252,.1);color:#c084fc',
+  'background:rgba(45,212,191,.1);color:#2dd4bf',
+  'background:rgba(251,146,60,.1);color:#fb923c',
+  'background:rgba(244,114,182,.1);color:#f472b6',
+  'background:rgba(163,230,53,.1);color:#a3e635',
+  'background:rgba(56,189,248,.1);color:#38bdf8',
 ];
 const SPEEDS = [1, 2, 3, 4];
 
@@ -1317,6 +1337,8 @@ let includeSubfolders = localStorage.getItem('ms_subfolders') === 'true';
 let fsPageOffset = 0;   // current recursive page offset
 let fsHasMore    = false; // whether more files exist beyond current page
 
+function folderColorIdx(ci) { return ci % DOT_COLORS.length; }
+
 function loadFolders() {
   const DEFAULTS = [{ name: 'Save', ci: 0 }, { name: 'Delete', ci: 1 }];
   try {
@@ -1328,7 +1350,7 @@ function loadFolders() {
         p[0].ci = 0; p[1].ci = 1;
         if (/^Folder \d+$/.test(p[0].name)) p[0].name = DEFAULTS[0].name;
         if (/^Folder \d+$/.test(p[1].name)) p[1].name = DEFAULTS[1].name;
-        return p;
+        return p.slice(0, MAX_FOLDERS);
       }
     }
   } catch {}
@@ -1380,7 +1402,7 @@ function renderFolderConfig() {
     const row = document.createElement('div');
     row.className = 'folder-row';
     row.innerHTML =
-      `<button class="sort-btn compact btn-c${f.ci}" id="sortBtn_${i}" onclick="sortCurrent(${i})" ${(!files.length || busy) ? 'disabled' : ''}>` +
+      `<button class="sort-btn compact btn-c${folderColorIdx(f.ci)}" id="sortBtn_${i}" onclick="sortCurrent(${i})" ${(!files.length || busy) ? 'disabled' : ''}>` +
         `<span class="btn-key">${i + 1}</span></button>` +
       `<input class="fname-input" value="${esc(f.name)}" maxlength="40" oninput="onFolderRename(${i}, this.value)">` +
       `<button class="rm-btn" onclick="removeFolder(${i})" ${i < 2 ? 'disabled title="Cannot remove default folders"' : 'title="Remove"'}>×</button>`;
@@ -1395,7 +1417,8 @@ function onFolderRename(i, val) {
 function addFolder() {
   if (folders.length >= MAX_FOLDERS) return;
   const usedCi = new Set(folders.map(f => f.ci));
-  let ci = 0; while (usedCi.has(ci)) ci++;
+  let ci = 0; while (usedCi.has(ci) && ci < DOT_COLORS.length) ci++;
+  if (ci >= DOT_COLORS.length) ci = folders.length % DOT_COLORS.length;
   folders.push({ name: `Folder ${folders.length + 1}`, ci });
   persistFolders(); renderFolderConfig();
 }
@@ -1862,7 +1885,7 @@ function updateViewerSortBadge() {
   const f = files[idx];
   if (!f || !f.sorted) { badge.style.display = 'none'; return; }
   const fi = folders.findIndex(fl => fl.name === f.sorted);
-  const color = fi >= 0 ? DOT_COLORS[folders[fi].ci] : '#888';
+  const color = fi >= 0 ? DOT_COLORS[folderColorIdx(folders[fi].ci)] : '#888';
   badge.style.borderColor = color; badge.style.color = color;
   badge.innerHTML =
     `<div class="vsb-num" style="border-color:${color}">${fi >= 0 ? fi + 1 : '?'}</div>` +
@@ -2138,7 +2161,7 @@ function buildFsItem(f, i) {
 
 function buildFsBadge(f) {
   const fi = folders.findIndex(fl => fl.name === f.sorted);
-  const color = fi >= 0 ? DOT_COLORS[folders[fi].ci] : '#666';
+  const color = fi >= 0 ? DOT_COLORS[folderColorIdx(folders[fi].ci)] : '#666';
   const badge = document.createElement('div');
   badge.className = 'fs-badge';
   badge.style.borderColor = color; badge.style.color = color;
@@ -2554,8 +2577,13 @@ function _initNavButtonHold() {
 ═══════════════════════════════════════════════════════════════ */
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-  if (e.key >= '1' && e.key <= '5') {
-    const fi = parseInt(e.key) - 1;
+  if (e.key >= '1' && e.key <= '9') {
+    const fi = parseInt(e.key, 10) - 1;
+    if (fi < folders.length) { e.preventDefault(); sortCurrent(fi); }
+    return;
+  }
+  if (e.key === '0') {
+    const fi = 9;
     if (fi < folders.length) { e.preventDefault(); sortCurrent(fi); }
     return;
   }

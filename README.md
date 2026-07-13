@@ -22,14 +22,14 @@ Light Mode:
 - **In-page folder browser.** Browsing for a folder now opens a built-in file browser inside the app instead of a native OS dialog, so it works even on Python installs without `tkinter`. Backed by a new `/api/list_dir` endpoint.
 - **Persistent mute button.** A mute toggle (🔊 / 🔇) in the video/audio control bar, also bound to the **M** key. The mute state carries over between videos and is remembered across sessions.
 - **More reliable sorting of videos.** Fixes the intermittent `Unexpected token '<'` error when sifting a playing video. The browser's file handle is released before the move, transient Windows file locks are retried server-side, and API errors now always return JSON (never an HTML error page).
-- **Combined destinations panel.** The "Sift Destinations" and "Sift Into Folder" sections are merged into one: each destination row has a compact colored numbered button (1–5) that both labels and triggers the sort.
+- **Combined destinations panel.** The "Sift Destinations" and "Sift Into Folder" sections are merged into one: each destination row has a compact colored numbered button that both labels and triggers the sort (up to 10 destinations).
 
 ---
 
 ## Features
 
 - Supports images, video, and audio
-- Up to 5 custom sort destinations with keyboard shortcuts (1–5)
+- Up to 10 custom sort destinations with keyboard shortcuts (`1`–`9`, `0` for the 10th)
 - Filmstrip view with video thumbnails
 - Re-sort already-sorted files into a different destination at any time
 - Undo last sort with **Z**
@@ -85,7 +85,8 @@ python server.py
 
 | Key       | Action                   |
 |-----------|--------------------------|
-| `1`–`5`   | Sift file to destination |
+| `1`–`9`   | Sift file to destination 1–9 |
+| `0`       | Sift file to destination 10  |
 | `←` / `→` | Navigate files           |
 | `Z`       | Undo last sift           |
 | `Space`   | Play / pause             |
