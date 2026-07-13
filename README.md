@@ -1,4 +1,4 @@
-# Sift. Free Media Sorter for Windows
+# Sift-Extended. Free Media Sorter for Windows
 
 Sift is a fast, no-fuss media sorting tool for Windows. Open a folder of images, videos, or audio files, set up your destinations, and move through them one by one with a single keypress. Built for the moment you realize you have gigabytes of unsorted media and just need to get through it.
 <img width="2556" height="1384" alt="sift_preview_image_1" src="https://github.com/user-attachments/assets/8d2e409e-afeb-4cda-b700-39f25fdad6fa" />
@@ -7,6 +7,22 @@ Grid Mode View:
 Light Mode:
 <img width="2556" height="1390" alt="image" src="https://github.com/user-attachments/assets/bb4efde7-6268-4f9d-b6de-e92e278a154f" />
 
+---
+
+## About this fork
+
+**Sift-Extended** is a fork of the original [Sift by NimbleCloud13](https://github.com/nimblecloud13) that adds performance improvements for large video collections, preview rotation, an in-page folder browser, a persistent mute control, more reliable file moves, and a streamlined destinations panel. All of the original functionality is preserved. See [What's new in this fork](#whats-new-in-this-fork) for details.
+
+---
+
+## What's new in this fork
+
+- **Handles large video folders without freezing.** Thumbnails are generated lazily as items scroll into view (via an `IntersectionObserver`), with a concurrency-limited queue and small off-screen canvases, and the filmstrip and grid are built in non-blocking batches. Loading folders with hundreds of videos no longer hangs the page.
+- **Rotate the preview.** Rotate-left / rotate-right buttons in the filmstrip rotate the current image or video preview in 90° steps (preview only, the file on disk is untouched). Rotated videos render through a `<canvas>` so they display correctly at 90°/270° instead of appearing blank.
+- **In-page folder browser.** Browsing for a folder now opens a built-in file browser inside the app instead of a native OS dialog, so it works even on Python installs without `tkinter`. Backed by a new `/api/list_dir` endpoint.
+- **Persistent mute button.** A mute toggle (🔊 / 🔇) in the video/audio control bar, also bound to the **M** key. The mute state carries over between videos and is remembered across sessions.
+- **More reliable sorting of videos.** Fixes the intermittent `Unexpected token '<'` error when sifting a playing video. The browser's file handle is released before the move, transient Windows file locks are retried server-side, and API errors now always return JSON (never an HTML error page).
+- **Combined destinations panel.** The "Sift Destinations" and "Sift Into Folder" sections are merged into one: each destination row has a compact colored numbered button (1–5) that both labels and triggers the sort.
 
 ---
 
@@ -39,6 +55,7 @@ Light Mode:
 
 - Windows 10 or 11
 - Python 3.10+
+- `tkinter` is optional. It is only used for the system-tray/taskbar window; Sift runs fine without it (folder browsing uses the built-in in-page browser). If it's missing, Sift falls back to plain terminal mode.
 
 ---
 
@@ -72,8 +89,11 @@ python server.py
 | `←` / `→` | Navigate files           |
 | `Z`       | Undo last sift           |
 | `Space`   | Play / pause             |
+| `M`       | Mute / unmute            |
 | `F`       | Toggle fullscreen        |
 | `B`       | Browse for folder        |
+
+> Preview rotation is available from the rotate buttons in the filmstrip (rotates the current preview only, in 90° steps).
 
 ---
 
@@ -85,6 +105,10 @@ For commercial licensing enquiries: [x.com/NimbleCloud13](https://x.com/NimbleCl
 
 ---
 
-Made by [NimbleCloud13](https://x.com/NimbleCloud13) · [GitHub](https://github.com/nimblecloud13) · [Reddit](https://old.reddit.com/user/Nimblecloud13/)
+## Credits
 
-If you find Sift useful: [☕ Buy me a coffee](https://buymeacoffee.com/nimblecloud13)
+**Sift-Extended** is a fork maintained by [slikvik55](https://github.com/slikvik55).
+
+Original **Sift** created by [NimbleCloud13](https://x.com/NimbleCloud13) · [GitHub](https://github.com/nimblecloud13) · [Reddit](https://old.reddit.com/user/Nimblecloud13/)
+
+If you find Sift useful, please support the original author: [☕ Buy me a coffee](https://buymeacoffee.com/nimblecloud13)
