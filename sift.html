@@ -363,7 +363,6 @@ html:not(.light) .tbtn-red:hover   { background: rgba(248,113,113,.08); }
 .rm-btn:disabled { opacity: .12; cursor: default; }
 
 /* ══ SORT BUTTONS ═══════════════════════════════════════════════════ */
-.sort-btns-group { display: flex; flex-direction: column; gap: 5px; }
 .sort-btn {
   width: 100%; height: 52px;
   display: flex; align-items: center; gap: 11px;
@@ -384,6 +383,9 @@ html:not(.light) .tbtn-red:hover   { background: rgba(248,113,113,.08); }
   font-size: 11px; font-weight: 700; font-family: 'Consolas', monospace;
 }
 .sort-btn span:last-child { flex: 1; }
+/* Compact variant used in a folder-row: short width, full height, centered number */
+.sort-btn.compact { width: 46px; padding: 0; gap: 0; justify-content: center; }
+.sort-btn.compact .btn-key { flex: 0 0 auto; }
 .btn-c0 { background: linear-gradient(110deg,rgba(74,222,128,.10),rgba(74,222,128,.16)); border-color: rgba(74,222,128,.3); border-left-color: #4ade80; color: #16a34a; }
 .btn-c0:not(:disabled):hover { background: linear-gradient(110deg,rgba(74,222,128,.22),rgba(74,222,128,.30)); box-shadow: 0 4px 18px rgba(74,222,128,.22); transform: translateX(2px); }
 .btn-c1 { background: linear-gradient(110deg,rgba(248,113,113,.10),rgba(248,113,113,.16)); border-color: rgba(248,113,113,.3); border-left-color: #f87171; color: #dc2626; }
@@ -408,7 +410,7 @@ html:not(.light) .btn-c4 { background: linear-gradient(110deg,#10081a,#150b22); 
 }
 .browse-btn:not(:disabled):hover { filter: brightness(1.08); box-shadow: 0 6px 26px rgba(245,158,11,.4); transform: translateY(-1px); }
 .undo-btn {
-  width: 100%; height: 34px; margin-top: 4px;
+  width: 100%; height: 34px; margin-top: 10px;
   background: transparent; border: 1px solid var(--border-hi);
   border-radius: 7px; color: var(--text-dim);
   font-size: 11.5px; font-weight: 500; letter-spacing: .2px;
@@ -1123,19 +1125,13 @@ code {
       </div>
     </div>
 
-    <!-- Folder destinations -->
+    <!-- Folder destinations + sort -->
     <div class="rp-section">
       <div class="rp-head">
         <span class="rp-label">Sift Destinations</span>
         <button class="add-folder-btn" id="addFolderBtn" onclick="addFolder()">+ Add</button>
       </div>
       <div id="folderConfig"></div>
-    </div>
-
-    <!-- Sort buttons + undo -->
-    <div class="rp-section">
-      <div class="rp-label" style="margin-bottom:10px">Sift into folder:</div>
-      <div class="sort-btns-group" id="sortBtns"></div>
       <button class="undo-btn" id="undoBtn" onclick="undoSort()" disabled>↩ Undo Last Move</button>
     </div>
 
@@ -1345,7 +1341,6 @@ function persistFolders() { localStorage.setItem('ms_folders', JSON.stringify(fo
 ═══════════════════════════════════════════════════════════════ */
 window.addEventListener('DOMContentLoaded', async () => {
   renderFolderConfig();
-  renderSortButtons();
   renderSpeedButtons();
   initSsControls();
   _initNavButtonHold();
@@ -1385,9 +1380,9 @@ function renderFolderConfig() {
     const row = document.createElement('div');
     row.className = 'folder-row';
     row.innerHTML =
-      `<div class="dot" style="background:${DOT_COLORS[f.ci]}"></div>` +
+      `<button class="sort-btn compact btn-c${f.ci}" id="sortBtn_${i}" onclick="sortCurrent(${i})" ${(!files.length || busy) ? 'disabled' : ''}>` +
+        `<span class="btn-key">${i + 1}</span></button>` +
       `<input class="fname-input" value="${esc(f.name)}" maxlength="40" oninput="onFolderRename(${i}, this.value)">` +
-      `<span class="kbd">${i + 1}</span>` +
       `<button class="rm-btn" onclick="removeFolder(${i})" ${i < 2 ? 'disabled title="Cannot remove default folders"' : 'title="Remove"'}>×</button>`;
     el.appendChild(row);
   });
@@ -1395,14 +1390,14 @@ function renderFolderConfig() {
 }
 function onFolderRename(i, val) {
   folders[i].name = val.trim() || `Folder ${i + 1}`;
-  persistFolders(); renderSortButtons(); renderList();
+  persistFolders(); renderList();
 }
 function addFolder() {
   if (folders.length >= MAX_FOLDERS) return;
   const usedCi = new Set(folders.map(f => f.ci));
   let ci = 0; while (usedCi.has(ci)) ci++;
   folders.push({ name: `Folder ${folders.length + 1}`, ci });
-  persistFolders(); renderFolderConfig(); renderSortButtons();
+  persistFolders(); renderFolderConfig();
 }
 function removeFolder(i) {
   if (i < 2) return;
@@ -1411,25 +1406,12 @@ function removeFolder(i) {
   allFiles.forEach(f => { if (f.sorted === removedName) f.sorted = null; });
   undoStack = undoStack.filter(u => u.folderName !== removedName);
   document.getElementById('undoBtn').disabled = undoStack.length === 0;
-  applyFilter(); renderFolderConfig(); renderSortButtons(); updateStats(); renderList();
+  applyFilter(); renderFolderConfig(); updateStats(); renderList();
 }
 
 /* ═══════════════════════════════════════════════════════════════
    Sort buttons
 ═══════════════════════════════════════════════════════════════ */
-function renderSortButtons() {
-  const wrap = document.getElementById('sortBtns');
-  wrap.innerHTML = '';
-  folders.forEach((f, i) => {
-    const btn = document.createElement('button');
-    btn.className = `sort-btn btn-c${f.ci}`;
-    btn.id = `sortBtn_${i}`;
-    btn.disabled = !files.length || busy;
-    btn.innerHTML = `<span class="btn-key">${i + 1}</span><span>${esc(f.name)}</span>`;
-    btn.onclick = () => sortCurrent(i);
-    wrap.appendChild(btn);
-  });
-}
 function setSortButtonsDisabled(disabled) {
   folders.forEach((_, i) => { const b = document.getElementById(`sortBtn_${i}`); if (b) b.disabled = disabled; });
   document.getElementById('undoBtn').disabled = disabled || undoStack.length === 0;
@@ -1478,7 +1460,7 @@ function setFilter(mode) {
     const el = document.getElementById('filter' + m.charAt(0).toUpperCase() + m.slice(1));
     if (el) el.classList.toggle('active', m === mode);
   });
-  applyFilter(); updateStats(); renderList(); renderSortButtons(); renderFilmstrip();
+  applyFilter(); updateStats(); renderList(); renderFolderConfig(); renderFilmstrip();
   if (!files.length) { showEmpty('No ' + (mode === 'both' ? 'media' : mode === 'audios' ? 'audio' : mode === 'videos' ? 'video' : mode) + ' files found in this folder.'); return; }
   const first = findNextUnsorted(0);
   if (first === -1) allDone(); else showFile(first);
@@ -1491,7 +1473,7 @@ function setSortOrder(order) {
   sortOrder = order;
   document.getElementById('sortAsc').classList.toggle('active',  order === 'asc');
   document.getElementById('sortDesc').classList.toggle('active', order === 'desc');
-  applyFilter(); updateStats(); renderList(); renderSortButtons(); renderFilmstrip();
+  applyFilter(); updateStats(); renderList(); renderFolderConfig(); renderFilmstrip();
   if (!files.length) return;
   const first = findNextUnsorted(0);
   if (first === -1) allDone(); else showFile(first);
@@ -1815,7 +1797,7 @@ async function loadFolder(path, offset = 0) {
     document.getElementById('filmstrip').style.display = '';
 
     idx = 0; busy = false;
-    updateStats(); renderList(); renderSortButtons(); renderFilmstrip();
+    updateStats(); renderList(); renderFolderConfig(); renderFilmstrip();
     await showFile(0);
   } catch(e) { toast('Server error: ' + e.message); busy = false; }
 }
