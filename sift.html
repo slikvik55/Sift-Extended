@@ -2770,6 +2770,8 @@ function buildVcBar(viewer, withEdit) {
       `<button class="vc-btn wide" id="vcMarkA" onclick="setEditMark('A')" title="Set mark A (snaps to keyframe)">A</button>` +
       `<button class="vc-btn wide" id="vcMarkB" onclick="setEditMark('B')" title="Set mark B (snaps to keyframe)">B</button>` +
       `<button class="vc-btn wide" id="vcEditDel" onclick="deleteEditRange()" title="Delete between A and B" disabled>Delete</button>` +
+      `<button class="vc-btn wide" id="vcSnapshot" onclick="snapshotCurrentFrame()" title="Save current frame as JPEG (95 quality)">Snapshot</button>` +
+      `<button class="vc-btn wide" id="vcClearEdits" onclick="clearEdits()" title="Clear all marks and cut-list edits" disabled>Clear Edits</button>` +
       `<span class="vc-edit-status" id="vcEditStatus">Loading keyframes…</span>`;
     viewer.appendChild(edit);
   }
@@ -2867,6 +2869,58 @@ function deleteEditRange() {
   toast('Range removed from cut list');
 }
 
+function clearEdits() {
+  if (!_edit.duration) return;
+  _edit.markA = null;
+  _edit.markB = null;
+  _edit.segments = [{ start: 0, end: _edit.duration }];
+  updateEditUi();
+  toast('Edits cleared');
+}
+
+async function snapshotCurrentFrame() {
+  const v = document.querySelector('#viewer video');
+  if (!v || !v.videoWidth) { toast('No video frame to capture'); return; }
+  const src = currentSrcPayload();
+  if (!src) return;
+
+  let dataUrl;
+  try {
+    const wrap = document.querySelector('#viewer .video-wrap');
+    const rotCanvas = wrap && wrap.classList.contains('rot-active')
+      ? wrap.querySelector('.video-canvas') : null;
+    if (rotCanvas && rotCanvas.width && rotCanvas.height) {
+      dataUrl = rotCanvas.toDataURL('image/jpeg', 0.95);
+    } else {
+      const c = document.createElement('canvas');
+      c.width = v.videoWidth;
+      c.height = v.videoHeight;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(v, 0, 0, c.width, c.height);
+      dataUrl = c.toDataURL('image/jpeg', 0.95);
+    }
+  } catch (e) {
+    toast('Snapshot failed: ' + e.message);
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/snapshot', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename: src.filename,
+        src_subfolder: src.src_subfolder || '',
+        image: dataUrl,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) { toast(data.error || 'Snapshot failed'); return; }
+    toast(`Snapshot saved: ${data.dest_name}`);
+  } catch (e) {
+    toast('Server error: ' + e.message);
+  }
+}
+
 function editSkipDeleted(v) {
   if (!_edit.segments.length || !editIsModified()) return;
   const t = v.currentTime;
@@ -2884,12 +2938,15 @@ function updateEditUi() {
   const btnA = document.getElementById('vcMarkA');
   const btnB = document.getElementById('vcMarkB');
   const btnDel = document.getElementById('vcEditDel');
+  const btnClear = document.getElementById('vcClearEdits');
   const status = document.getElementById('vcEditStatus');
   if (btnA) btnA.classList.toggle('active-a', _edit.markA != null);
   if (btnB) btnB.classList.toggle('active-b', _edit.markB != null);
   const canDel = _edit.markA != null && _edit.markB != null &&
     Math.abs(_edit.markA - _edit.markB) > 0.05;
   if (btnDel) btnDel.disabled = !canDel;
+  const hasEdits = _edit.markA != null || _edit.markB != null || editIsModified();
+  if (btnClear) btnClear.disabled = !hasEdits;
 
   if (status) {
     if (_edit.loading) status.textContent = 'Loading keyframes…';

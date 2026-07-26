@@ -5,6 +5,7 @@ Run with:  python server.py
 import os
 import sys
 import time
+import base64
 import shutil
 import tempfile
 import subprocess
@@ -668,6 +669,50 @@ def api_export_edit():
         return jsonify({"ok": False, "error": str(e)}), 500
 
     return jsonify({"ok": True, "dest_name": os.path.basename(dest_path)})
+
+
+@app.route("/api/snapshot", methods=["POST"])
+def api_snapshot():
+    """Save a JPEG snapshot next to the source video as basename_snap.jpg."""
+    global src_folder
+    if not src_folder:
+        return jsonify({"ok": False, "error": "No folder open"}), 400
+
+    data = request.get_json(force=True) or {}
+    filename = (data.get("filename") or "").strip()
+    src_subfolder = (data.get("src_subfolder") or "").strip()
+    image_data = data.get("image") or ""
+
+    if not filename or not image_data:
+        return jsonify({"ok": False, "error": "Missing filename or image"}), 400
+    if ".." in filename or ".." in src_subfolder:
+        return jsonify({"ok": False, "error": "Invalid path"}), 400
+
+    src_path = _resolve_src_path(filename, src_subfolder)
+    if not src_path:
+        return jsonify({"ok": False, "error": f"File not found: {filename}"}), 404
+
+    if "," in image_data:
+        image_data = image_data.split(",", 1)[1]
+    try:
+        raw = base64.b64decode(image_data, validate=False)
+    except Exception:
+        return jsonify({"ok": False, "error": "Invalid image data"}), 400
+    if len(raw) < 100 or raw[:2] != b"\xff\xd8":
+        return jsonify({"ok": False, "error": "Expected a JPEG image"}), 400
+
+    base, _ext = os.path.splitext(filename)
+    snap_name = f"{base}_snap.jpg"
+    dest_dir = os.path.dirname(src_path)
+    dest_path = _unique_dest_path(dest_dir, snap_name)
+
+    try:
+        with open(dest_path, "wb") as fh:
+            fh.write(raw)
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify({"ok": True, "dest_name": os.path.basename(dest_path), "path": dest_path})
 
 
 # ─── Undo: move a file from a subfolder back to source ───────────────────────
