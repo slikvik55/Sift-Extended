@@ -11,7 +11,7 @@ Light Mode:
 
 ## About this fork
 
-**Sift-Extended** is a fork of the original [Sift by NimbleCloud13](https://github.com/nimblecloud13) that adds performance improvements for large video collections, preview rotation, an in-page folder browser, a persistent mute control, more reliable file moves, and a streamlined destinations panel. All of the original functionality is preserved. See [What's new in this fork](#whats-new-in-this-fork) for details.
+**Sift-Extended** is a fork of the original [Sift by NimbleCloud13](https://github.com/nimblecloud13) that adds performance improvements for large video collections, preview rotation, an in-page folder browser, a persistent mute control, stream-copy video editing, more reliable file moves, and a streamlined destinations panel. All of the original functionality is preserved. See [What's new in this fork](#whats-new-in-this-fork) for details.
 
 ---
 
@@ -23,6 +23,11 @@ Light Mode:
 - **Persistent mute button.** A mute toggle (🔊 / 🔇) in the video/audio control bar, also bound to the **M** key. The mute state carries over between videos and is remembered across sessions.
 - **More reliable sorting of videos.** Fixes the intermittent `Unexpected token '<'` error when sifting a playing video. The browser's file handle is released before the move, transient Windows file locks are retried server-side, and API errors now always return JSON (never an HTML error page).
 - **Combined destinations panel.** The "Sift Destinations" and "Sift Into Folder" sections are merged into one: each destination row has a compact colored numbered button that both labels and triggers the sort (up to 10 destinations).
+- **Video edit panel (stream-copy cuts).** On videos, an edit strip below the transport controls offers previous/next keyframe, Mark A / Mark B (auto-snapped to keyframes), and Delete (removes A–B from an in-app cut list). Sifting then:
+  1. With A and B set → exports the A–B selection as `originalname_edit.ext` into the destination (original stays selected).
+  2. With a modified cut list (no active A/B) → exports the kept segments the same way.
+  3. With no edits → moves the original file (existing behavior).
+  Cuts use ffmpeg stream copy (no re-encode). Edit state clears when you navigate to another file.
 
 ---
 
@@ -37,6 +42,7 @@ Light Mode:
 - **Strip Metadata.** Duplicate any folder with embedded metadata removed from every file (images via Pillow, video/audio via ffmpeg)
 - Slideshow mode with fullscreen support
 - Scroll-to-zoom on images and video, with click-and-drag panning when zoomed in
+- **Video edit panel.** Keyframe seek, A/B marks, delete range; sift exports `originalname_edit.ext` via ffmpeg stream copy when a selection or cut list exists
 - Paste any folder path directly into the path box and press Enter to load
 - Runs locally. No internet connection, no account, no telemetry
 
@@ -56,6 +62,7 @@ Light Mode:
 - Windows 10 or 11
 - Python 3.10+
 - `tkinter` is optional. It is only used for the system-tray/taskbar window; Sift runs fine without it (folder browsing uses the built-in in-page browser). If it's missing, Sift falls back to plain terminal mode.
+- **ffmpeg** (with ffprobe) is required for the video edit panel and for stripping metadata from some video formats. Sift can install it via Windows Package Manager when prompted.
 
 ---
 
@@ -95,6 +102,8 @@ python server.py
 | `B`       | Browse for folder        |
 
 > Preview rotation is available from the rotate buttons in the filmstrip (rotates the current preview only, in 90° steps).
+
+> Video editing controls appear under the transport bar when a video is open: previous/next keyframe, Mark A / Mark B, and Delete. With A–B set (or after Delete cuts), pressing a sift destination exports `originalname_edit.ext` and leaves the original selected.
 
 ---
 
