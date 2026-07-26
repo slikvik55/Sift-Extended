@@ -227,14 +227,51 @@ html:not(.light) .tbtn-red:hover   { background: rgba(248,113,113,.08); }
   /* Right panel is position:fixed (264px), so this bar spans under it. Keep controls clear of it. */
   padding: 0 14px; padding-right: 278px;
 }
+.vcedit {
+  height: 36px; background: var(--bg-panel); border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  padding: 0 14px; padding-right: 278px;
+}
+.vc-edit-label {
+  font-size: 10px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .4px; margin-right: 2px; flex-shrink: 0;
+}
 .vc-btn {
   width: 28px; height: 28px; background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 6px; color: var(--text-dim); cursor: pointer; font-size: 12px;
   display: flex; align-items: center; justify-content: center; transition: all var(--t); flex-shrink: 0;
 }
-.vc-btn:hover { border-color: var(--border-hi); color: var(--text); }
-.vc-seek { flex: 1; height: 3px; cursor: pointer; accent-color: var(--accent); min-width: 0; }
+.vc-btn.wide { width: auto; padding: 0 8px; font-size: 11px; font-weight: 600; }
+.vc-btn:hover:not(:disabled) { border-color: var(--border-hi); color: var(--text); }
+.vc-btn:disabled { opacity: .25; cursor: not-allowed; }
+.vc-btn.active-a { border-color: #4ade80; color: #4ade80; }
+.vc-btn.active-b { border-color: #60a5fa; color: #60a5fa; }
+.vc-seek-wrap {
+  flex: 1; min-width: 0; position: relative; height: 18px;
+  display: flex; align-items: center;
+}
+.vc-seek-track {
+  position: absolute; left: 0; right: 0; top: 50%; height: 3px;
+  transform: translateY(-50%); background: var(--border-hi); border-radius: 2px;
+  overflow: hidden; pointer-events: none;
+}
+.vc-seek-deleted {
+  position: absolute; top: 0; bottom: 0;
+  background: rgba(248,113,113,.55);
+}
+.vc-mark {
+  position: absolute; top: 1px; bottom: 1px; width: 2px;
+  transform: translateX(-50%); pointer-events: none; z-index: 2;
+}
+.vc-mark.a { background: #4ade80; box-shadow: 0 0 0 1px rgba(74,222,128,.35); }
+.vc-mark.b { background: #60a5fa; box-shadow: 0 0 0 1px rgba(96,165,250,.35); }
+.vc-seek-wrap .vc-seek {
+  position: relative; z-index: 3; width: 100%; flex: 1;
+  height: 3px; cursor: pointer; accent-color: var(--accent); min-width: 0;
+  background: transparent;
+}
 .vc-time { font-size: 10.5px; color: var(--text-muted); font-family: 'Consolas', monospace; flex-shrink: 0; min-width: 34px; text-align: center; }
+.vc-edit-status { font-size: 10.5px; color: var(--text-muted); margin-left: auto; flex-shrink: 0; }
 
 /* ══ FILMSTRIP ═══════════════════════════════════════════════════════ */
 .filmstrip {
@@ -1838,8 +1875,9 @@ async function showFile(i) {
   document.getElementById('navNext').style.display = '';
 
   const viewer = document.getElementById('viewer');
-  viewer.querySelectorAll('.video-wrap, .vcbar').forEach(el => el.remove());
+  viewer.querySelectorAll('.video-wrap, .vcbar, .vcedit').forEach(el => el.remove());
   viewer.classList.remove('video-mode');
+  resetEditState();
 
   const f = files[idx];
   const url = '/media/' + mediaPathOf(f) + '?_=' + Date.now();
@@ -1859,11 +1897,17 @@ async function showFile(i) {
     const wrap = document.createElement('div'); wrap.className = 'video-wrap';
     const mediaEl = document.createElement(mtype==='audio'?'audio':'video');
     mediaEl.src = url; mediaEl.autoplay = true; mediaEl.loop = true; mediaEl.muted = muted;
-    mediaEl.addEventListener('loadedmetadata', () => { mediaEl.playbackRate = currentSpeed; updateVcDur(mediaEl); });
-    mediaEl.addEventListener('timeupdate', () => updateVcProgress(mediaEl));
+    mediaEl.addEventListener('loadedmetadata', () => {
+      mediaEl.playbackRate = currentSpeed; updateVcDur(mediaEl);
+      if (mtype === 'video') initEditForVideo(mediaEl);
+    });
+    mediaEl.addEventListener('timeupdate', () => {
+      if (mtype === 'video') editSkipDeleted(mediaEl);
+      updateVcProgress(mediaEl);
+    });
     mediaEl.addEventListener('play',  () => { const b = document.getElementById('vcPlay'); if (b) b.textContent = '⏸'; });
     mediaEl.addEventListener('pause', () => { const b = document.getElementById('vcPlay'); if (b) b.textContent = '▶'; });
-    wrap.appendChild(mediaEl); viewer.appendChild(wrap); buildVcBar(viewer);
+    wrap.appendChild(mediaEl); viewer.appendChild(wrap); buildVcBar(viewer, mtype === 'video');
   }
 
   document.getElementById('fileChip').style.display = 'none';
@@ -1952,7 +1996,44 @@ async function sortCurrent(folderIdx) {
   if (new Set(folderA).size !== folders.length) { toast('Folder names must be unique'); return; }
   const folder = folders[folderIdx].name.trim();
   if (!folder) { toast('Folder name is empty'); return; }
-  const f = files[idx]; busy = true; setSortButtonsDisabled(true);
+  const f = files[idx];
+  const mtype = (f.mediaType || f.type);
+  const exportSegs = (mtype === 'video') ? getExportSegments() : null;
+
+  // Export edited/selected clip: leave original selected (no move, no auto-advance)
+  if (exportSegs) {
+    busy = true; setSortButtonsDisabled(true);
+    try {
+      const src = currentSrcPayload();
+      const resp = await fetch('/api/export_edit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: src.filename,
+          src_subfolder: src.src_subfolder || '',
+          folder,
+          segments: exportSegs,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        if (data.ffmpeg_needed) promptFfmpegForEdit();
+        toast(data.error || 'Export failed');
+        busy = false; setSortButtonsDisabled(false);
+        return;
+      }
+      _edit.markA = null;
+      _edit.markB = null;
+      updateEditUi();
+      toast(`Exported ${data.dest_name} → ${folder}`);
+      busy = false; setSortButtonsDisabled(false);
+    } catch (e) {
+      toast('Server error: ' + e.message);
+      busy = false; setSortButtonsDisabled(false);
+    }
+    return;
+  }
+
+  busy = true; setSortButtonsDisabled(true);
   // Release the browser's file handle on the current media first. A playing/buffering
   // <video> locks the file on Windows, which would make the server-side move fail.
   _releaseCurrentMedia();
@@ -2021,7 +2102,7 @@ async function undoSort() {
 function allDone() {
   stopSlideshow();
   const viewer = document.getElementById('viewer');
-  viewer.querySelectorAll('img, .video-wrap, .vcbar').forEach(el => el.remove());
+  viewer.querySelectorAll('img, .video-wrap, .vcbar, .vcedit').forEach(el => el.remove());
   viewer.classList.remove('video-mode');
   const es = document.getElementById('emptyState');
   es.innerHTML = `
@@ -2041,7 +2122,7 @@ function allDone() {
 }
 function showEmpty(msg) {
   const viewer = document.getElementById('viewer');
-  viewer.querySelectorAll('img, .video-wrap, .vcbar').forEach(el => el.remove());
+  viewer.querySelectorAll('img, .video-wrap, .vcbar, .vcedit').forEach(el => el.remove());
   viewer.classList.remove('video-mode');
   document.getElementById('viewerSortBadge').style.display = 'none';
   document.getElementById('emptyState').style.display = '';
@@ -2608,15 +2689,69 @@ document.addEventListener('keyup', e => {
 });
 
 /* ═══════════════════════════════════════════════════════════════
-   Video controls
+   Video controls + edit panel (stream-copy cut list)
 ═══════════════════════════════════════════════════════════════ */
-function buildVcBar(viewer) {
+let _edit = {
+  keyframes: [],
+  markA: null,
+  markB: null,
+  segments: [],
+  duration: 0,
+  loading: false,
+};
+
+function resetEditState() {
+  _edit = { keyframes: [], markA: null, markB: null, segments: [], duration: 0, loading: false };
+}
+
+function currentSrcPayload() {
+  const f = files[idx];
+  if (!f) return null;
+  const payload = { filename: f.sortedAs || f.name };
+  if (f.sorted) payload.src_subfolder = f.sorted;
+  else if (f.subfolder) payload.src_subfolder = f.subfolder;
+  return payload;
+}
+
+function editIsModified() {
+  if (!_edit.duration || !_edit.segments.length) return false;
+  if (_edit.segments.length !== 1) return true;
+  const s = _edit.segments[0];
+  return Math.abs(s.start) > 0.02 || Math.abs(s.end - _edit.duration) > 0.05;
+}
+
+function snapToKeyframe(t) {
+  const kfs = _edit.keyframes;
+  if (!kfs.length) return Math.max(0, t);
+  let best = kfs[0], bestD = Math.abs(kfs[0] - t);
+  for (let i = 1; i < kfs.length; i++) {
+    const d = Math.abs(kfs[i] - t);
+    if (d < bestD) { best = kfs[i]; bestD = d; }
+  }
+  return best;
+}
+
+function removeRangeFromSegments(segments, a, b) {
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  const out = [];
+  for (const seg of segments) {
+    if (hi <= seg.start || lo >= seg.end) { out.push(seg); continue; }
+    if (lo > seg.start + 0.001) out.push({ start: seg.start, end: lo });
+    if (hi < seg.end - 0.001) out.push({ start: hi, end: seg.end });
+  }
+  return out;
+}
+
+function buildVcBar(viewer, withEdit) {
   const bar = document.createElement('div');
   bar.className = 'vcbar';
   bar.innerHTML =
     `<button class="vc-btn" id="vcPlay" onclick="vcTogglePlay()">⏸</button>` +
     `<span class="vc-time" id="vcTime">0:00</span>` +
-    `<input type="range" class="vc-seek" id="vcSeek" min="0" max="100" step="0.1" value="0">` +
+    `<div class="vc-seek-wrap" id="vcSeekWrap">` +
+      `<div class="vc-seek-track" id="vcSeekTrack"></div>` +
+      `<input type="range" class="vc-seek" id="vcSeek" min="0" max="100" step="0.1" value="0">` +
+    `</div>` +
     `<span class="vc-time" id="vcDur">0:00</span>` +
     `<button class="vc-btn" id="vcMute" onclick="vcToggleMute()" title="Mute (M)">${muted ? '🔇' : '🔊'}</button>`;
   bar.querySelector('#vcSeek').addEventListener('input', function() {
@@ -2624,6 +2759,20 @@ function buildVcBar(viewer) {
     if (v && v.duration) v.currentTime = (this.value / 100) * v.duration;
   });
   viewer.appendChild(bar);
+
+  if (withEdit) {
+    const edit = document.createElement('div');
+    edit.className = 'vcedit';
+    edit.innerHTML =
+      `<span class="vc-edit-label">Edit</span>` +
+      `<button class="vc-btn" id="vcKfPrev" onclick="gotoKeyframe(-1)" title="Previous keyframe">⏮</button>` +
+      `<button class="vc-btn" id="vcKfNext" onclick="gotoKeyframe(1)" title="Next keyframe">⏭</button>` +
+      `<button class="vc-btn wide" id="vcMarkA" onclick="setEditMark('A')" title="Set mark A (snaps to keyframe)">A</button>` +
+      `<button class="vc-btn wide" id="vcMarkB" onclick="setEditMark('B')" title="Set mark B (snaps to keyframe)">B</button>` +
+      `<button class="vc-btn wide" id="vcEditDel" onclick="deleteEditRange()" title="Delete between A and B" disabled>Delete</button>` +
+      `<span class="vc-edit-status" id="vcEditStatus">Loading keyframes…</span>`;
+    viewer.appendChild(edit);
+  }
 }
 function vcTogglePlay() { const v = document.querySelector('#viewer video, #viewer audio'); if (!v) return; v.paused ? v.play() : v.pause(); }
 function vcToggleMute() {
@@ -2638,6 +2787,183 @@ function updateVcProgress(v) {
   const t = document.getElementById('vcTime'); const s = document.getElementById('vcSeek');
   if (t) t.textContent = fmtDuration(v.currentTime);
   if (s && v.duration) s.value = (v.currentTime / v.duration) * 100;
+}
+
+async function initEditForVideo(mediaEl) {
+  _edit.duration = mediaEl.duration || 0;
+  _edit.segments = _edit.duration > 0 ? [{ start: 0, end: _edit.duration }] : [];
+  _edit.markA = null;
+  _edit.markB = null;
+  _edit.keyframes = [0];
+  _edit.loading = true;
+  updateEditUi();
+
+  const src = currentSrcPayload();
+  if (!src) { _edit.loading = false; updateEditUi(); return; }
+  try {
+    let url = '/api/keyframes?filename=' + encodeURIComponent(src.filename);
+    if (src.src_subfolder) url += '&src_subfolder=' + encodeURIComponent(src.src_subfolder);
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      const status = document.getElementById('vcEditStatus');
+      if (status) status.textContent = data.error || 'No keyframes';
+      _edit.loading = false;
+      updateEditUi();
+      return;
+    }
+    _edit.keyframes = (data.keyframes && data.keyframes.length) ? data.keyframes : [0];
+  } catch (e) {
+    const status = document.getElementById('vcEditStatus');
+    if (status) status.textContent = 'Keyframe load failed';
+  }
+  _edit.loading = false;
+  updateEditUi();
+}
+
+function gotoKeyframe(dir) {
+  const v = document.querySelector('#viewer video');
+  if (!v || !_edit.keyframes.length) return;
+  const t = v.currentTime;
+  if (dir < 0) {
+    let prev = null;
+    for (const k of _edit.keyframes) {
+      if (k < t - 0.04) prev = k;
+      else break;
+    }
+    v.currentTime = prev != null ? prev : _edit.keyframes[0];
+  } else {
+    let next = null;
+    for (const k of _edit.keyframes) {
+      if (k > t + 0.04) { next = k; break; }
+    }
+    v.currentTime = next != null ? next : _edit.keyframes[_edit.keyframes.length - 1];
+  }
+  updateVcProgress(v);
+}
+
+function setEditMark(which) {
+  const v = document.querySelector('#viewer video');
+  if (!v) return;
+  const snapped = snapToKeyframe(v.currentTime);
+  v.currentTime = snapped;
+  if (which === 'A') _edit.markA = snapped;
+  else _edit.markB = snapped;
+  updateVcProgress(v);
+  updateEditUi();
+}
+
+function deleteEditRange() {
+  if (_edit.markA == null || _edit.markB == null) return;
+  const a = Math.min(_edit.markA, _edit.markB);
+  const b = Math.max(_edit.markA, _edit.markB);
+  if (b - a < 0.05) { toast('A and B are too close'); return; }
+  const next = removeRangeFromSegments(_edit.segments, a, b);
+  if (!next.length) { toast('Cannot delete the entire video'); return; }
+  _edit.segments = next;
+  _edit.markA = null;
+  _edit.markB = null;
+  updateEditUi();
+  toast('Range removed from cut list');
+}
+
+function editSkipDeleted(v) {
+  if (!_edit.segments.length || !editIsModified()) return;
+  const t = v.currentTime;
+  for (const seg of _edit.segments) {
+    if (t >= seg.start - 0.02 && t < seg.end - 0.02) return;
+  }
+  // In a deleted gap — jump to the next kept segment (or loop to first)
+  for (const seg of _edit.segments) {
+    if (seg.start > t) { v.currentTime = seg.start; return; }
+  }
+  if (_edit.segments[0]) v.currentTime = _edit.segments[0].start;
+}
+
+function updateEditUi() {
+  const btnA = document.getElementById('vcMarkA');
+  const btnB = document.getElementById('vcMarkB');
+  const btnDel = document.getElementById('vcEditDel');
+  const status = document.getElementById('vcEditStatus');
+  if (btnA) btnA.classList.toggle('active-a', _edit.markA != null);
+  if (btnB) btnB.classList.toggle('active-b', _edit.markB != null);
+  const canDel = _edit.markA != null && _edit.markB != null &&
+    Math.abs(_edit.markA - _edit.markB) > 0.05;
+  if (btnDel) btnDel.disabled = !canDel;
+
+  if (status) {
+    if (_edit.loading) status.textContent = 'Loading keyframes…';
+    else if (_edit.markA != null && _edit.markB != null) {
+      const a = Math.min(_edit.markA, _edit.markB), b = Math.max(_edit.markA, _edit.markB);
+      status.textContent = `A–B ${fmtDuration(a)}–${fmtDuration(b)} · sift exports selection`;
+    } else if (editIsModified()) {
+      status.textContent = `${_edit.segments.length} segment(s) kept · sift exports edit`;
+    } else {
+      status.textContent = `${_edit.keyframes.length} keyframes`;
+    }
+  }
+
+  const track = document.getElementById('vcSeekTrack');
+  const wrap = document.getElementById('vcSeekWrap');
+  if (!track || !wrap || !_edit.duration) return;
+  track.innerHTML = '';
+  // Paint deleted ranges (inverse of kept segments)
+  let cursor = 0;
+  const segs = [..._edit.segments].sort((x, y) => x.start - y.start);
+  for (const seg of segs) {
+    if (seg.start > cursor + 0.01) {
+      const el = document.createElement('div');
+      el.className = 'vc-seek-deleted';
+      el.style.left = (cursor / _edit.duration * 100) + '%';
+      el.style.width = ((seg.start - cursor) / _edit.duration * 100) + '%';
+      track.appendChild(el);
+    }
+    cursor = Math.max(cursor, seg.end);
+  }
+  if (cursor < _edit.duration - 0.01) {
+    const el = document.createElement('div');
+    el.className = 'vc-seek-deleted';
+    el.style.left = (cursor / _edit.duration * 100) + '%';
+    el.style.width = ((_edit.duration - cursor) / _edit.duration * 100) + '%';
+    track.appendChild(el);
+  }
+
+  wrap.querySelectorAll('.vc-mark').forEach(el => el.remove());
+  if (_edit.markA != null) {
+    const m = document.createElement('div');
+    m.className = 'vc-mark a';
+    m.style.left = (_edit.markA / _edit.duration * 100) + '%';
+    wrap.appendChild(m);
+  }
+  if (_edit.markB != null) {
+    const m = document.createElement('div');
+    m.className = 'vc-mark b';
+    m.style.left = (_edit.markB / _edit.duration * 100) + '%';
+    wrap.appendChild(m);
+  }
+}
+
+function promptFfmpegForEdit() {
+  const msg = document.getElementById('ffmpegModalMsg');
+  if (msg) {
+    msg.innerHTML = `Video editing needs <strong>ffmpeg</strong> to cut without re-encoding. Install it automatically, then try again.`;
+  }
+  const status = document.getElementById('ffmpegInstallStatus');
+  if (status) status.textContent = '';
+  const btn = document.getElementById('ffmpegInstallBtn');
+  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  document.getElementById('ffmpegOverlay').style.display = 'flex';
+}
+
+function getExportSegments() {
+  // Priority: A–B selection export, else kept cut-list segments
+  if (_edit.markA != null && _edit.markB != null) {
+    const a = Math.min(_edit.markA, _edit.markB);
+    const b = Math.max(_edit.markA, _edit.markB);
+    if (b - a > 0.05) return [{ start: a, end: b }];
+  }
+  if (editIsModified()) return _edit.segments.map(s => ({ start: s.start, end: s.end }));
+  return null;
 }
 
 /* ═══════════════════════════════════════════════════════════════

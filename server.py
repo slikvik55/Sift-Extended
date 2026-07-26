@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import shutil
+import tempfile
 import subprocess
 import threading
 import webbrowser
@@ -101,6 +102,198 @@ def _find_ffmpeg() -> "str | None":
 
 
 _ffmpeg_exe: "str | None" = _find_ffmpeg()
+_keyframe_cache: dict = {}  # path -> (mtime, [seconds...])
+
+
+def _find_ffprobe() -> "str | None":
+    """Return path to ffprobe binary, preferring the sibling of the ffmpeg we found."""
+    if _ffmpeg_exe:
+        if _ffmpeg_exe == "ffmpeg":
+            try:
+                r = subprocess.run(["ffprobe", "-version"], capture_output=True, timeout=5)
+                if r.returncode == 0:
+                    return "ffprobe"
+            except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+                pass
+        else:
+            sibling = str(Path(_ffmpeg_exe).with_name("ffprobe.exe" if sys.platform == "win32" else "ffprobe"))
+            if os.path.isfile(sibling):
+                return sibling
+    try:
+        r = subprocess.run(["ffprobe", "-version"], capture_output=True, timeout=5)
+        if r.returncode == 0:
+            return "ffprobe"
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    if sys.platform == "win32":
+        import glob as _glob
+        candidates = [
+            os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Links\ffprobe.exe"),
+        ]
+        pkg_base = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages")
+        if os.path.isdir(pkg_base):
+            candidates += _glob.glob(
+                os.path.join(pkg_base, "Gyan.FFmpeg*", "**", "bin", "ffprobe.exe"),
+                recursive=True,
+            )
+        for c in candidates:
+            if os.path.isfile(c):
+                return c
+    return None
+
+
+_ffprobe_exe: "str | None" = _find_ffprobe()
+
+
+def _resolve_src_path(filename: str, src_subfolder: str = "") -> "str | None":
+    """Resolve a media path under src_folder; return None if missing/invalid."""
+    if not src_folder or not filename:
+        return None
+    if ".." in filename or ".." in (src_subfolder or ""):
+        return None
+    path = (
+        os.path.join(src_folder, src_subfolder, filename)
+        if src_subfolder
+        else os.path.join(src_folder, filename)
+    )
+    return path if os.path.isfile(path) else None
+
+
+def _unique_dest_path(dest_dir: str, filename: str) -> str:
+    dest_path = os.path.join(dest_dir, filename)
+    if not os.path.exists(dest_path):
+        return dest_path
+    base, ext = os.path.splitext(filename)
+    n = 1
+    while os.path.exists(dest_path):
+        dest_path = os.path.join(dest_dir, f"{base}_{n}{ext}")
+        n += 1
+    return dest_path
+
+
+def _list_keyframes(path: str) -> "list[float]":
+    """Return I-frame timestamps (seconds) for the first video stream."""
+    global _ffprobe_exe
+    if not _ffprobe_exe:
+        _ffprobe_exe = _find_ffprobe()
+    if not _ffprobe_exe:
+        raise RuntimeError("ffprobe is not available. Install ffmpeg to enable video editing.")
+
+    mtime = os.path.getmtime(path)
+    cached = _keyframe_cache.get(path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    # Packet flags containing 'K' mark keyframes — much faster than decoding all frames.
+    result = subprocess.run(
+        [
+            _ffprobe_exe, "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "packet=pts_time,flags",
+            "-of", "csv=p=0",
+            path,
+        ],
+        capture_output=True, text=True, timeout=180,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip().splitlines()
+        raise RuntimeError(detail[-1] if detail else "ffprobe failed")
+
+    keyframes: list[float] = []
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(",")
+        if len(parts) < 2:
+            continue
+        pts_s, flags = parts[0], parts[1]
+        if "K" not in flags:
+            continue
+        try:
+            t = float(pts_s)
+        except ValueError:
+            continue
+        if t < 0:
+            continue
+        if not keyframes or abs(keyframes[-1] - t) > 0.001:
+            keyframes.append(t)
+
+    if not keyframes:
+        keyframes = [0.0]
+
+    _keyframe_cache[path] = (mtime, keyframes)
+    return keyframes
+
+
+def _stream_copy_segment(src: str, dest: str, start: float, end: float) -> None:
+    """Extract [start, end) from src into dest with stream copy (no re-encode)."""
+    global _ffmpeg_exe
+    if not _ffmpeg_exe:
+        _ffmpeg_exe = _find_ffmpeg()
+    if not _ffmpeg_exe:
+        raise RuntimeError("ffmpeg is not available")
+    if end <= start:
+        raise ValueError("Segment end must be after start")
+    duration = end - start
+    result = subprocess.run(
+        [
+            _ffmpeg_exe, "-y",
+            "-ss", f"{start:.6f}",
+            "-i", src,
+            "-t", f"{duration:.6f}",
+            "-c", "copy",
+            "-avoid_negative_ts", "make_zero",
+            dest,
+        ],
+        capture_output=True, text=True, timeout=600,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip().splitlines()
+        raise RuntimeError(detail[-1] if detail else "ffmpeg segment export failed")
+
+
+def _stream_copy_segments(src: str, dest: str, segments: "list[tuple[float, float]]") -> None:
+    """Export one or more kept segments into dest via stream copy (+ concat if needed)."""
+    if not segments:
+        raise ValueError("No segments to export")
+    if len(segments) == 1:
+        _stream_copy_segment(src, dest, segments[0][0], segments[0][1])
+        return
+
+    global _ffmpeg_exe
+    if not _ffmpeg_exe:
+        _ffmpeg_exe = _find_ffmpeg()
+    if not _ffmpeg_exe:
+        raise RuntimeError("ffmpeg is not available")
+
+    tmpdir = tempfile.mkdtemp(prefix="sift_edit_")
+    try:
+        part_paths = []
+        for i, (start, end) in enumerate(segments):
+            part = os.path.join(tmpdir, f"part_{i:03d}{Path(src).suffix}")
+            _stream_copy_segment(src, part, start, end)
+            part_paths.append(part)
+
+        list_path = os.path.join(tmpdir, "concat.txt")
+        with open(list_path, "w", encoding="utf-8") as fh:
+            for p in part_paths:
+                # concat demuxer needs forward-slash escaped paths
+                safe = p.replace("\\", "/").replace("'", "'\\''")
+                fh.write(f"file '{safe}'\n")
+
+        result = subprocess.run(
+            [
+                _ffmpeg_exe, "-y",
+                "-f", "concat", "-safe", "0",
+                "-i", list_path,
+                "-c", "copy",
+                dest,
+            ],
+            capture_output=True, text=True, timeout=600,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or "").strip().splitlines()
+            raise RuntimeError(detail[-1] if detail else "ffmpeg concat failed")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _resource(rel_path: str) -> Path:
@@ -386,6 +579,97 @@ def api_sort():
     return jsonify({"ok": True, "dest_name": os.path.basename(dest_path)})
 
 
+# ─── Video edit: keyframes + stream-copy export ──────────────────────────────
+
+@app.route("/api/keyframes")
+def api_keyframes():
+    global src_folder
+    if not src_folder:
+        return jsonify({"ok": False, "error": "No folder open"}), 400
+
+    filename = (request.args.get("filename") or "").strip()
+    src_subfolder = (request.args.get("src_subfolder") or "").strip()
+    if not filename:
+        return jsonify({"ok": False, "error": "Missing filename"}), 400
+
+    src_path = _resolve_src_path(filename, src_subfolder)
+    if not src_path:
+        return jsonify({"ok": False, "error": f"File not found: {filename}"}), 404
+
+    try:
+        keyframes = _list_keyframes(src_path)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify({"ok": True, "keyframes": keyframes})
+
+
+@app.route("/api/export_edit", methods=["POST"])
+def api_export_edit():
+    """Stream-copy one or more kept segments into folder/basename_edit.ext.
+
+    Does not move or modify the source file.
+    """
+    global src_folder, _ffmpeg_exe, _ffprobe_exe
+    if not src_folder:
+        return jsonify({"ok": False, "error": "No folder open"}), 400
+
+    if not _ffmpeg_exe:
+        _ffmpeg_exe = _find_ffmpeg()
+    if not _ffmpeg_exe:
+        return jsonify({
+            "ok": False,
+            "error": "ffmpeg is required for video editing. Install it from the Strip Metadata prompt, or from ffmpeg.org.",
+            "ffmpeg_needed": True,
+        }), 400
+
+    data = request.get_json(force=True) or {}
+    filename = (data.get("filename") or "").strip()
+    dest_folder = (data.get("folder") or "").strip()
+    src_subfolder = (data.get("src_subfolder") or "").strip()
+    raw_segments = data.get("segments") or []
+
+    if not filename or not dest_folder:
+        return jsonify({"ok": False, "error": "Missing filename or folder"}), 400
+    if ".." in filename or ".." in dest_folder or ".." in src_subfolder:
+        return jsonify({"ok": False, "error": "Invalid path"}), 400
+    if not isinstance(raw_segments, list) or not raw_segments:
+        return jsonify({"ok": False, "error": "No segments to export"}), 400
+
+    src_path = _resolve_src_path(filename, src_subfolder)
+    if not src_path:
+        return jsonify({"ok": False, "error": f"File not found: {filename}"}), 404
+
+    segments: list[tuple[float, float]] = []
+    for seg in raw_segments:
+        try:
+            start = float(seg.get("start"))
+            end = float(seg.get("end"))
+        except (TypeError, ValueError, AttributeError):
+            return jsonify({"ok": False, "error": "Invalid segment"}), 400
+        if end <= start:
+            return jsonify({"ok": False, "error": "Each segment must have end > start"}), 400
+        segments.append((start, end))
+
+    base, ext = os.path.splitext(filename)
+    edit_name = f"{base}_edit{ext}"
+    dest_dir = os.path.join(src_folder, dest_folder)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest_path = _unique_dest_path(dest_dir, edit_name)
+
+    try:
+        _stream_copy_segments(src_path, dest_path, segments)
+    except Exception as e:
+        if os.path.isfile(dest_path):
+            try:
+                os.remove(dest_path)
+            except OSError:
+                pass
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify({"ok": True, "dest_name": os.path.basename(dest_path)})
+
+
 # ─── Undo: move a file from a subfolder back to source ───────────────────────
 
 @app.route("/api/undo", methods=["POST"])
@@ -541,7 +825,7 @@ def strip_metadata():
 
 @app.route("/api/install_ffmpeg", methods=["POST"])
 def install_ffmpeg():
-    global _ffmpeg_exe
+    global _ffmpeg_exe, _ffprobe_exe
     try:
         subprocess.run(
             ["winget", "install", "--id", "Gyan.FFmpeg", "-e",
@@ -561,6 +845,7 @@ def install_ffmpeg():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
     _ffmpeg_exe = _find_ffmpeg()
+    _ffprobe_exe = _find_ffprobe()
     if not _ffmpeg_exe:
         return jsonify({
             "ok": False,
