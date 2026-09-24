@@ -1004,7 +1004,7 @@ code {
         <div class="guide-step-num">6</div>
         <div class="guide-step-body">
           <div class="guide-step-title">Filter by media type</div>
-          <div class="guide-step-desc">Use the <strong>Show</strong> buttons to limit the view to Images, Videos, Audio, or All. You can also change the list order between A→Z and Z→A from the <strong>List Order</strong> panel.</div>
+          <div class="guide-step-desc">Use the <strong>Show</strong> buttons to limit the view to Images, Videos, Audio, or All. You can also change the list order between A→Z, Z→A, Old→New, and New→Old from the <strong>List Order</strong> panel.</div>
         </div>
       </div>
 
@@ -1171,9 +1171,11 @@ code {
         <span class="rp-label">List Order</span>
         <button class="mini-default-btn" onclick="saveDefaultSortOrder()">★ Set Default</button>
       </div>
-      <div class="toggle-row">
+      <div class="toggle-row" style="flex-wrap:wrap">
         <button class="tgl-btn active" id="sortAsc"  onclick="setSortOrder('asc')">A → Z</button>
         <button class="tgl-btn"        id="sortDesc" onclick="setSortOrder('desc')">Z → A</button>
+        <button class="tgl-btn"        id="sortDateAsc"  onclick="setSortOrder('date_asc')">Old → New</button>
+        <button class="tgl-btn"        id="sortDateDesc" onclick="setSortOrder('date_desc')">New → Old</button>
       </div>
     </div>
 
@@ -1369,6 +1371,7 @@ let currentSpeed  = defaultSpeed;
 let muted         = localStorage.getItem('ms_muted') === 'true';
 let startupMode      = localStorage.getItem('ms_startup') || 'blank';
 let defaultSortOrder = localStorage.getItem('ms_sort_order') || 'asc';
+if (defaultSortOrder === 'date') defaultSortOrder = 'date_desc'; // migrate old single Date mode
 let sortOrder        = defaultSortOrder;
 let includeSubfolders = localStorage.getItem('ms_subfolders') === 'true';
 let fsPageOffset = 0;   // current recursive page offset
@@ -1413,6 +1416,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   setTheme(_savedTheme);
   document.getElementById('sortAsc').classList.toggle('active',  sortOrder === 'asc');
   document.getElementById('sortDesc').classList.toggle('active', sortOrder === 'desc');
+  document.getElementById('sortDateAsc').classList.toggle('active',  sortOrder === 'date_asc');
+  document.getElementById('sortDateDesc').classList.toggle('active', sortOrder === 'date_desc');
   const _sfBtn = document.getElementById('subfoldersBtn');
   const _sfBtn2 = document.getElementById('startupSubfoldersBtn');
   if (_sfBtn)  _sfBtn.classList.toggle('active',  includeSubfolders);
@@ -1512,7 +1517,16 @@ function applyFilter() {
   else if (mediaFilter === 'videos') files = allFiles.filter(f => (f.type||f.mediaType) === 'video');
   else if (mediaFilter === 'audios') files = allFiles.filter(f => (f.type||f.mediaType) === 'audio');
   else files = allFiles.slice();
-  if (sortOrder === 'desc') files.reverse();
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  if (sortOrder === 'date_desc') {
+    files.sort((a, b) => (b.mtime || 0) - (a.mtime || 0) || byName(a, b));
+  } else if (sortOrder === 'date_asc') {
+    files.sort((a, b) => (a.mtime || 0) - (b.mtime || 0) || byName(a, b));
+  } else if (sortOrder === 'desc') {
+    files.sort((a, b) => byName(b, a));
+  } else {
+    files.sort(byName);
+  }
 }
 function setFilter(mode) {
   mediaFilter = mode;
@@ -1533,6 +1547,8 @@ function setSortOrder(order) {
   sortOrder = order;
   document.getElementById('sortAsc').classList.toggle('active',  order === 'asc');
   document.getElementById('sortDesc').classList.toggle('active', order === 'desc');
+  document.getElementById('sortDateAsc').classList.toggle('active',  order === 'date_asc');
+  document.getElementById('sortDateDesc').classList.toggle('active', order === 'date_desc');
   applyFilter(); updateStats(); renderList(); renderFolderConfig(); renderFilmstrip();
   if (!files.length) return;
   const first = findNextUnsorted(0);
@@ -1541,7 +1557,11 @@ function setSortOrder(order) {
 function saveDefaultSortOrder() {
   defaultSortOrder = sortOrder;
   localStorage.setItem('ms_sort_order', defaultSortOrder);
-  toast(`Default order: ${defaultSortOrder === 'asc' ? 'A → Z' : 'Z → A'}`);
+  const labels = {
+    asc: 'A → Z', desc: 'Z → A',
+    date_asc: 'Old → New', date_desc: 'New → Old',
+  };
+  toast(`Default order: ${labels[defaultSortOrder] || defaultSortOrder}`);
 }
 
 /* ═══════════════════════════════════════════════════════════════

@@ -76,6 +76,20 @@ PORT = 7432
 MAX_RECURSIVE_FILES = 2000   # safety cap for recursive scans
 
 
+def _file_sort_date(path: str) -> float:
+    """Timestamp used for Date list-order.
+
+    Uses the later of modification and creation/change time so newly copied
+    files (which often keep an old mtime) still sort as recent on Windows,
+    where st_ctime is the file's creation time.
+    """
+    st = os.stat(path)
+    birth = getattr(st, "st_birthtime", None)
+    if birth is not None:
+        return max(st.st_mtime, float(birth))
+    return max(st.st_mtime, st.st_ctime)
+
+
 def _find_ffmpeg() -> "str | None":
     """Return path to ffmpeg binary, or None if not found anywhere."""
     try:
@@ -495,6 +509,7 @@ def _scan_recursive(offset: int = 0) -> dict:
                     "subfolder": rel_dir,
                     "type":      media_type,
                     "size":      os.path.getsize(full),
+                    "mtime":     _file_sort_date(full),
                 })
     except PermissionError as e:
         return {
@@ -532,6 +547,7 @@ def _scan() -> dict:
             "name": name,
             "type": media_type,
             "size": os.path.getsize(full),
+            "mtime": _file_sort_date(full),
         })
     return {"files": entries, "folder": src_folder}
 
