@@ -284,7 +284,6 @@ html:not(.light) .tbtn-red:hover   { background: rgba(248,113,113,.08); }
 .fs-track {
   display: flex; align-items: center; gap: 4px;
   position: absolute; top: 50%; transform: translateY(-50%);
-  transition: left 0.22s cubic-bezier(.4,0,.2,1);
   will-change: left;
 }
 /* Static center frame. Always in the middle */
@@ -1699,6 +1698,11 @@ function mediaPathOf(f) {
   return encodeURIComponent(f.name);
 }
 
+/* Stable media URL (browser-cacheable). Path changes after sort/undo so no bust needed. */
+function mediaUrlOf(f) {
+  return '/media/' + mediaPathOf(f);
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Folder browsing
 ═══════════════════════════════════════════════════════════════ */
@@ -1883,65 +1887,137 @@ async function loadFolder(path, offset = 0) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Display a file
+   Display a file (optimized for fast left/right navigation)
 ═══════════════════════════════════════════════════════════════ */
-async function showFile(i) {
+let _mediaLoadToken = 0;
+let _mediaLoadTimer = null;
+const _prefetchSeen = new Set();
+
+function navigate(delta) {
+  const ni = idx + delta;
+  if (ni < 0 || ni >= files.length) return;
+  // While hold-repeating, coalesce heavy media loads; chrome still updates every step.
+  showFile(ni, { rapid: !!_navHold.iid });
+}
+
+async function showFile(i, opts = {}) {
   if (!files.length) { showEmpty('No media files found.'); return; }
   i = Math.max(0, Math.min(i, files.length - 1));
-  const prevIdx = idx; idx = i;
+  idx = i;
 
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('navPrev').style.display = '';
   document.getElementById('navNext').style.display = '';
 
-  const viewer = document.getElementById('viewer');
-  viewer.querySelectorAll('.video-wrap, .vcbar, .vcedit').forEach(el => el.remove());
-  viewer.classList.remove('video-mode');
-  resetEditState();
-
   const f = files[idx];
-  const url = '/media/' + mediaPathOf(f) + '?_=' + Date.now();
-  const mtype = (f.mediaType || f.type);
-
-  if (mtype === 'image') {
-    const oldImgs = [...viewer.querySelectorAll('img')];
-    const img = document.createElement('img');
-    img.draggable = false; img.alt = f.name; img.style.display = 'none';
-    const show = () => { oldImgs.forEach(el => el.remove()); img.style.display = ''; positionViewerSortBadge(); };
-    img.addEventListener('load', show, { once: true });
-    img.addEventListener('error', show, { once: true });
-    img.src = url; viewer.appendChild(img);
-  } else {
-    viewer.querySelectorAll('img').forEach(el => el.remove());
-    viewer.classList.add('video-mode');
-    const wrap = document.createElement('div'); wrap.className = 'video-wrap';
-    const mediaEl = document.createElement(mtype==='audio'?'audio':'video');
-    mediaEl.src = url; mediaEl.autoplay = true; mediaEl.loop = true; mediaEl.muted = muted;
-    mediaEl.addEventListener('loadedmetadata', () => {
-      mediaEl.playbackRate = currentSpeed; updateVcDur(mediaEl);
-      if (mtype === 'video') initEditForVideo(mediaEl);
-    });
-    mediaEl.addEventListener('timeupdate', () => {
-      if (mtype === 'video') editSkipDeleted(mediaEl);
-      updateVcProgress(mediaEl);
-    });
-    mediaEl.addEventListener('play',  () => { const b = document.getElementById('vcPlay'); if (b) b.textContent = '⏸'; });
-    mediaEl.addEventListener('pause', () => { const b = document.getElementById('vcPlay'); if (b) b.textContent = '▶'; });
-    wrap.appendChild(mediaEl); viewer.appendChild(wrap); buildVcBar(viewer, mtype === 'video');
-  }
-
+  // Lightweight chrome updates immediately so cursoring feels responsive
   document.getElementById('fileChip').style.display = 'none';
   document.getElementById('counter').textContent = `${idx + 1} / ${files.length}`;
   document.getElementById('statusText').textContent = `${f.name}  ·  ${fmtBytes(f.size)}`;
   document.getElementById('navPrev').disabled = idx === 0;
   document.getElementById('navNext').disabled = idx === files.length - 1;
-  setSortButtonsDisabled(false); highlightList(idx); highlightFilmstrip(idx);
-  updateViewerSortBadge(); clearFilterMsg(); updateGridActive();
+  setSortButtonsDisabled(false);
+  highlightList(idx);
+  highlightFilmstrip(idx);
+  updateViewerSortBadge();
+  clearFilterMsg();
+  updateGridActive();
   const cpBtn = document.getElementById('fsCopyPathBtn');
   if (cpBtn) cpBtn.style.display = 'block';
+
+  clearTimeout(_mediaLoadTimer);
+  const token = ++_mediaLoadToken;
+  const delay = opts.rapid ? 60 : 0;
+  if (delay === 0) {
+    _loadViewerMedia(token);
+  } else {
+    _mediaLoadTimer = setTimeout(() => {
+      if (token === _mediaLoadToken) _loadViewerMedia(token);
+    }, delay);
+  }
 }
 
-function navigate(delta) { const ni = idx + delta; if (ni >= 0 && ni < files.length) showFile(ni); }
+function _loadViewerMedia(token) {
+  if (token !== _mediaLoadToken || !files.length) return;
+  const viewer = document.getElementById('viewer');
+  const f = files[idx];
+  const url = mediaUrlOf(f);
+  const mtype = (f.mediaType || f.type);
+
+  resetEditState();
+
+  if (mtype === 'image') {
+    viewer.querySelectorAll('.video-wrap, .vcbar, .vcedit').forEach(el => el.remove());
+    viewer.classList.remove('video-mode');
+
+    let img = viewer.querySelector('img.viewer-media');
+    if (!img) {
+      // Drop any leftover non-reused imgs (empty state logos stay elsewhere)
+      viewer.querySelectorAll('img:not(.state-logo)').forEach(el => el.remove());
+      img = document.createElement('img');
+      img.className = 'viewer-media';
+      img.draggable = false;
+      viewer.appendChild(img);
+    }
+    img.alt = f.name;
+
+    const already = img.getAttribute('src') === url && img.complete && img.naturalWidth > 0;
+    const reveal = () => {
+      if (token !== _mediaLoadToken) return;
+      img.style.display = '';
+      positionViewerSortBadge();
+      prefetchNeighbors(idx);
+    };
+
+    img.onload = reveal;
+    img.onerror = reveal;
+    if (already) {
+      // Instant swap when flipping back to a cached neighbor — no blank frame
+      reveal();
+    } else {
+      img.style.display = 'none';
+      img.src = url;
+      if (img.complete && img.naturalWidth > 0) reveal();
+    }
+    return;
+  }
+
+  // Video / audio
+  viewer.querySelectorAll('img.viewer-media').forEach(el => el.remove());
+  viewer.querySelectorAll('.video-wrap, .vcbar, .vcedit').forEach(el => el.remove());
+  viewer.classList.add('video-mode');
+  const wrap = document.createElement('div'); wrap.className = 'video-wrap';
+  const mediaEl = document.createElement(mtype === 'audio' ? 'audio' : 'video');
+  mediaEl.src = url; mediaEl.autoplay = true; mediaEl.loop = true; mediaEl.muted = muted;
+  mediaEl.addEventListener('loadedmetadata', () => {
+    if (token !== _mediaLoadToken) return;
+    mediaEl.playbackRate = currentSpeed; updateVcDur(mediaEl);
+    if (mtype === 'video') initEditForVideo(mediaEl);
+  });
+  mediaEl.addEventListener('timeupdate', () => {
+    if (mtype === 'video') editSkipDeleted(mediaEl);
+    updateVcProgress(mediaEl);
+  });
+  mediaEl.addEventListener('play',  () => { const b = document.getElementById('vcPlay'); if (b) b.textContent = '⏸'; });
+  mediaEl.addEventListener('pause', () => { const b = document.getElementById('vcPlay'); if (b) b.textContent = '▶'; });
+  wrap.appendChild(mediaEl); viewer.appendChild(wrap); buildVcBar(viewer, mtype === 'video');
+  prefetchNeighbors(idx);
+}
+
+function prefetchNeighbors(center) {
+  for (const j of [center - 2, center - 1, center + 1, center + 2]) {
+    if (j < 0 || j >= files.length) continue;
+    const f = files[j];
+    if ((f.mediaType || f.type) !== 'image') continue;
+    const url = mediaUrlOf(f);
+    if (_prefetchSeen.has(url)) continue;
+    _prefetchSeen.add(url);
+    const pre = new Image();
+    pre.decoding = 'async';
+    pre.src = url;
+  }
+  if (_prefetchSeen.size > 100) _prefetchSeen.clear();
+}
 
 function updateViewerSortBadge() {
   const badge = document.getElementById('viewerSortBadge');
@@ -2210,6 +2286,7 @@ function renderFilmstrip() {
   if (!files.length) { strip.style.display = 'none'; track.innerHTML = ''; return; }
   strip.style.display = '';
   track.innerHTML = '';
+  _fsActiveIdx = -1;
 
   const list = files;
   let i = 0;
@@ -2219,7 +2296,7 @@ function renderFilmstrip() {
     const end = Math.min(i + FS_BUILD_BATCH, list.length);
     for (; i < end; i++) frag.appendChild(buildFsItem(list[i], i));
     track.appendChild(frag);
-    positionFilmstrip(false);
+    positionFilmstrip();
     if (i < list.length) requestAnimationFrame(buildBatch);
   };
   buildBatch();
@@ -2228,6 +2305,7 @@ function renderFilmstrip() {
 function buildFsItem(f, i) {
   const item = document.createElement('div');
   item.className = 'fs-item' + (i === idx ? ' fs-active' : '');
+  if (i === idx) _fsActiveIdx = i;
   item.dataset.idx = i;
   item.onclick = () => showFile(i);
   const t = f.mediaType || f.type;
@@ -2270,27 +2348,29 @@ function buildFsBadge(f) {
   return badge;
 }
 
-function positionFilmstrip(animate) {
+let _fsActiveIdx = -1;
+
+function positionFilmstrip() {
   const strip = document.getElementById('filmstrip');
   const track = document.getElementById('fsTrack');
   if (!strip || !track) return;
   const centerX = strip.clientWidth / 2;
-  const offset  = centerX - (idx * FS_STEP) - FS_ITEM_W / 2;
-  if (!animate) {
-    track.style.transition = 'none';
-    track.style.left = offset + 'px';
-    /* re-enable transition next frame */
-    requestAnimationFrame(() => { track.style.transition = ''; });
-  } else {
-    track.style.left = offset + 'px';
-  }
+  track.style.left = (centerX - (idx * FS_STEP) - FS_ITEM_W / 2) + 'px';
 }
 
 function highlightFilmstrip(newIdx) {
   const track = document.getElementById('fsTrack');
   if (!track) return;
-  track.querySelectorAll('.fs-item').forEach((el, i) => el.classList.toggle('fs-active', i === newIdx));
-  positionFilmstrip(true);
+  if (_fsActiveIdx !== newIdx) {
+    if (_fsActiveIdx >= 0 && _fsActiveIdx < track.children.length) {
+      track.children[_fsActiveIdx].classList.remove('fs-active');
+    }
+    if (newIdx >= 0 && newIdx < track.children.length) {
+      track.children[newIdx].classList.add('fs-active');
+    }
+    _fsActiveIdx = newIdx;
+  }
+  positionFilmstrip();
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -2508,7 +2588,7 @@ function updateFilmstripBadge(i) {
 }
 
 /* Recalculate on resize so cursor stays aligned */
-window.addEventListener('resize', () => { if (files.length) { positionFilmstrip(false); positionViewerSortBadge(); } });
+window.addEventListener('resize', () => { if (files.length) { positionFilmstrip(); positionViewerSortBadge(); } });
 
 /* ═══════════════════════════════════════════════════════════════
    Scroll-to-zoom
@@ -2646,7 +2726,7 @@ window.addEventListener('mouseup', () => { isPanning = false; applyZoom(); });
 
 // Reset zoom on file change — hook into showFile
 const _origShowFile = showFile;
-showFile = async function(i) { resetZoom(); await _origShowFile(i); };
+showFile = async function(i, opts) { resetZoom(); await _origShowFile(i, opts); };
 
 /* ═══════════════════════════════════════════════════════════════
    Hold-to-fast-scroll (shared by keyboard arrows + nav buttons)
@@ -2655,12 +2735,15 @@ let _navHold = { tid: null, iid: null };
 function _navHoldStart(delta) {
   clearTimeout(_navHold.tid); clearInterval(_navHold.iid);
   _navHold.tid = setTimeout(() => {
-    _navHold.iid = setInterval(() => navigate(delta), 100);
+    _navHold.iid = setInterval(() => navigate(delta), 160);
   }, 380);
 }
 function _navHoldStop() {
+  const wasRepeating = !!_navHold.iid;
   clearTimeout(_navHold.tid); clearInterval(_navHold.iid);
   _navHold.tid = null; _navHold.iid = null;
+  // After hold-scroll, ensure the settled index's media is fully loaded
+  if (wasRepeating && files.length) showFile(idx);
 }
 
 function _initNavButtonHold() {
